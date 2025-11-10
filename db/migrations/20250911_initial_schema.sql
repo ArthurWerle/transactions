@@ -1,5 +1,22 @@
-CREATE TYPE transaction_type AS ENUM ('income', 'expense');
-CREATE TYPE transaction_subtype AS ENUM ('salary', 'profits', 'pro-labore');
+DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_type WHERE typname = 'transaction_type'
+        ) THEN
+            CREATE TYPE transaction_type AS ENUM ('income', 'expense');
+        END IF;
+    END;
+$$;
+
+DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_type WHERE typname = 'transaction_subtype'
+        ) THEN
+            CREATE TYPE transaction_subtype AS ENUM ('salary', 'profits', 'pro-labore');
+        END IF;
+    END;
+$$;
 
 CREATE TABLE IF NOT EXISTS transactions_v2 (
     id SERIAL PRIMARY KEY,
