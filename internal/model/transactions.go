@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-type Transactions struct {
+type Transaction struct {
 	ID          uint       `gorm:"primaryKey" json:"id"`
 	MigratedID  *uint      `gorm:"column:migrated_id" json:"migrated_id,omitempty"`
 	IsRecurring bool       `gorm:"not null;default:false" json:"is_recurring"`
@@ -22,6 +22,6 @@ type Transactions struct {
 }
 
 // TableName specifies the table name for the Transactions model
-func (Transactions) TableName() string {
+func (Transaction) TableName() string {
 	return "transactions_v2"
 }

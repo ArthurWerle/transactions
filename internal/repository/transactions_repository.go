@@ -8,15 +8,15 @@ import (
 )
 
 type TransactionsRepository interface {
-	Create(transaction *model.Transactions) error
-	FindByID(id uint) (*model.Transactions, error)
-	FindAll(limit, offset int) ([]model.Transactions, error)
-	Update(transaction *model.Transactions) error
+	Create(transaction *model.Transaction) error
+	FindByID(id uint) (*model.Transaction, error)
+	FindAll() ([]model.Transaction, error)
+	Update(transaction *model.Transaction) error
 	Delete(id uint) error
-	FindByDateRange(startDate, endDate time.Time) ([]model.Transactions, error)
-	FindByType(transactionType string, limit, offset int) ([]model.Transactions, error)
-	FindRecurring() ([]model.Transactions, error)
-	FindByCategory(categoryID uint, limit, offset int) ([]model.Transactions, error)
+	FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error)
+	FindByType(transactionType string, limit, offset int) ([]model.Transaction, error)
+	FindRecurring() ([]model.Transaction, error)
+	FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error)
 }
 
 type transactionsRepository struct {
@@ -27,12 +27,12 @@ func NewTransactionsRepository(db *gorm.DB) TransactionsRepository {
 	return &transactionsRepository{db: db}
 }
 
-func (r *transactionsRepository) Create(transaction *model.Transactions) error {
+func (r *transactionsRepository) Create(transaction *model.Transaction) error {
 	return r.db.Create(transaction).Error
 }
 
-func (r *transactionsRepository) FindByID(id uint) (*model.Transactions, error) {
-	var transaction model.Transactions
+func (r *transactionsRepository) FindByID(id uint) (*model.Transaction, error) {
+	var transaction model.Transaction
 	err := r.db.First(&transaction, id).Error
 	if err != nil {
 		return nil, err
@@ -40,30 +40,30 @@ func (r *transactionsRepository) FindByID(id uint) (*model.Transactions, error) 
 	return &transaction, nil
 }
 
-func (r *transactionsRepository) FindAll(limit, offset int) ([]model.Transactions, error) {
-	var transactions []model.Transactions
-	err := r.db.Limit(limit).Offset(offset).Order("date DESC").Find(&transactions).Error
+func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
+	var transactions []model.Transaction
+	err := r.db.Order("date DESC").Find(&transactions).Error
 	return transactions, err
 }
 
-func (r *transactionsRepository) Update(transaction *model.Transactions) error {
+func (r *transactionsRepository) Update(transaction *model.Transaction) error {
 	return r.db.Save(transaction).Error
 }
 
 func (r *transactionsRepository) Delete(id uint) error {
-	return r.db.Delete(&model.Transactions{}, id).Error
+	return r.db.Delete(&model.Transaction{}, id).Error
 }
 
-func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) ([]model.Transactions, error) {
-	var transactions []model.Transactions
+func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error) {
+	var transactions []model.Transaction
 	err := r.db.Where("date >= ? AND date <= ?", startDate, endDate).
 		Order("date DESC").
 		Find(&transactions).Error
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindByType(transactionType string, limit, offset int) ([]model.Transactions, error) {
-	var transactions []model.Transactions
+func (r *transactionsRepository) FindByType(transactionType string, limit, offset int) ([]model.Transaction, error) {
+	var transactions []model.Transaction
 	err := r.db.Where("type = ?", transactionType).
 		Limit(limit).
 		Offset(offset).
@@ -72,16 +72,16 @@ func (r *transactionsRepository) FindByType(transactionType string, limit, offse
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindRecurring() ([]model.Transactions, error) {
-	var transactions []model.Transactions
+func (r *transactionsRepository) FindRecurring() ([]model.Transaction, error) {
+	var transactions []model.Transaction
 	err := r.db.Where("is_recurring = ?", true).
 		Order("start_date DESC").
 		Find(&transactions).Error
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindByCategory(categoryID uint, limit, offset int) ([]model.Transactions, error) {
-	var transactions []model.Transactions
+func (r *transactionsRepository) FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error) {
+	var transactions []model.Transaction
 	err := r.db.Where("category_id = ?", categoryID).
 		Limit(limit).
 		Offset(offset).

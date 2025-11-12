@@ -9,6 +9,7 @@ import (
 	"github.com/ArthurWerle/transactions/internal/config"
 	"github.com/ArthurWerle/transactions/internal/model"
 	"github.com/ArthurWerle/transactions/internal/repository"
+	"github.com/ArthurWerle/transactions/internal/service"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
@@ -30,13 +31,14 @@ func main() {
 	}
 
 	if err := db.AutoMigrate(
-		&model.Transactions{},
+		&model.Transaction{},
 	); err != nil {
 		logger.Error("failed to auto migrate", "error", err)
 		os.Exit(1)
 	}
 
 	transactionRepo := repository.NewTransactionsRepository(db)
+	transactionService := service.NewTransactionsService(transactionRepo)
 }
 
 func setupLogger(level string) *slog.Logger {
