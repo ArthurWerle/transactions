@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS transactions_v2 (
     frequency VARCHAR(50),
     start_date DATE,
     end_date DATE,
+    created_by_id INTEGER NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
