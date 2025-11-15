@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/ArthurWerle/transactions/internal/config"
 	"github.com/ArthurWerle/transactions/internal/handler"
+	"github.com/ArthurWerle/transactions/internal/migrations"
 	"github.com/ArthurWerle/transactions/internal/model"
 	"github.com/ArthurWerle/transactions/internal/repository"
 	"github.com/ArthurWerle/transactions/internal/service"
@@ -33,6 +34,12 @@ func main() {
 	db, err := setupDatabase(cfg, logger)
 	if err != nil {
 		logger.Error("failed to setup database", "error", err)
+		os.Exit(1)
+	}
+
+	// Run SQL migrations
+	if err := migrations.RunMigrations(db, logger); err != nil {
+		logger.Error("failed to run migrations", "error", err)
 		os.Exit(1)
 	}
 
@@ -81,14 +88,12 @@ func main() {
 }
 
 func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler) *gin.Engine {
-	// Set gin mode
 	if cfg.Log.Level != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	router := gin.New()
 
-	// Health check
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status": "healthy",
@@ -96,10 +101,8 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 		})
 	})
 
-	// API routes
 	v1 := router.Group("/api/v2")
 	{
-		// User routes
 		transactions := v1.Group("/transactions")
 		{
 			transactions.GET("/", transactionHandler.GetTransactions)

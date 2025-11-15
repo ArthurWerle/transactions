@@ -21,16 +21,16 @@ func NewTransactionHandler(transactionService service.TransactionsService) *Tran
 }
 
 type CreateTransactionRequest struct {
-	IsRecurring bool     `json:"is_recurring"`
-	CategoryID  *uint    `json:"category_id,omitempty"`
-	Amount      float64  `json:"amount" binding:"required"`
-	Type        string   `json:"type" binding:"required"`
-	Subtype     *string  `json:"subtype,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Date        *string  `json:"date,omitempty"`
-	Frequency   *string  `json:"frequency,omitempty"`
-	StartDate   *string  `json:"start_date,omitempty"`
-	EndDate     *string  `json:"end_date,omitempty"`
+	IsRecurring bool    `json:"is_recurring"`
+	CategoryID  *uint   `json:"category_id,omitempty"`
+	Amount      float64 `json:"amount" binding:"required"`
+	Type        string  `json:"type" binding:"required"`
+	Subtype     *string `json:"subtype,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Date        *string `json:"date,omitempty"`
+	Frequency   *string `json:"frequency,omitempty"`
+	StartDate   *string `json:"start_date,omitempty"`
+	EndDate     *string `json:"end_date,omitempty"`
 }
 
 func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
@@ -520,10 +520,10 @@ func (h *TransactionHandler) GetTransactionsByCategories(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"transactions":  transactions,
-		"count":         len(transactions),
-		"category_ids":  req.CategoryIDs,
-		"limit":         limit,
-		"offset":        offset,
+		"transactions": transactions,
+		"count":        len(transactions),
+		"category_ids": req.CategoryIDs,
+		"limit":        limit,
+		"offset":       offset,
 	})
 }
