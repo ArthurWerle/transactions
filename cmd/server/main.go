@@ -1,15 +1,21 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/config"
+	"github.com/ArthurWerle/transactions/internal/handler"
 	"github.com/ArthurWerle/transactions/internal/model"
 	"github.com/ArthurWerle/transactions/internal/repository"
 	"github.com/ArthurWerle/transactions/internal/service"
+	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
@@ -39,6 +45,74 @@ func main() {
 
 	transactionRepo := repository.NewTransactionsRepository(db)
 	transactionService := service.NewTransactionsService(transactionRepo)
+	transactionHandler := handler.NewTransactionHandler(transactionService)
+
+	router := setupRouter(cfg, logger, transactionHandler)
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", cfg.Server.Port),
+		Handler: router,
+	}
+
+	go func() {
+		logger.Info("starting HTTP server", "port", cfg.Server.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("failed to start server", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("shutting down server...")
+
+	// Context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("server forced to shutdown", "error", err)
+	}
+
+	logger.Info("server exited")
+}
+
+func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler) *gin.Engine {
+	// Set gin mode
+	if cfg.Log.Level != "debug" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.New()
+
+	// Health check
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "healthy",
+			"time":   time.Now().UTC().Format(time.RFC3339),
+		})
+	})
+
+	// API routes
+	v1 := router.Group("/api/v2")
+	{
+		// User routes
+		transactions := v1.Group("/transactions")
+		{
+			transactions.GET("/", transactionHandler.GetTransactions)
+			transactions.GET("/:id", transactionHandler.GetTransactionByID)
+			transactions.PUT("/:id", transactionHandler.UpdateTransaction)
+			transactions.DELETE("/:id", transactionHandler.DeleteTransaction)
+			transactions.POST("/by-categories", transactionHandler.GetTransactionsByCategories)
+			transactions.POST("/by-category/:id", transactionHandler.GetTransactionsByCategory)
+			transactions.POST("/by-date-range", transactionHandler.GetTransactionsByDateRange)
+		}
+	}
+
+	return router
 }
 
 func setupLogger(level string) *slog.Logger {

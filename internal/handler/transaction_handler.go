@@ -1,0 +1,529 @@
+package handler
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/ArthurWerle/transactions/internal/model"
+	"github.com/ArthurWerle/transactions/internal/service"
+	"github.com/gin-gonic/gin"
+)
+
+type TransactionHandler struct {
+	transactionService service.TransactionsService
+}
+
+func NewTransactionHandler(transactionService service.TransactionsService) *TransactionHandler {
+	return &TransactionHandler{
+		transactionService: transactionService,
+	}
+}
+
+type CreateTransactionRequest struct {
+	IsRecurring bool     `json:"is_recurring"`
+	CategoryID  *uint    `json:"category_id,omitempty"`
+	Amount      float64  `json:"amount" binding:"required"`
+	Type        string   `json:"type" binding:"required"`
+	Subtype     *string  `json:"subtype,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Date        *string  `json:"date,omitempty"`
+	Frequency   *string  `json:"frequency,omitempty"`
+	StartDate   *string  `json:"start_date,omitempty"`
+	EndDate     *string  `json:"end_date,omitempty"`
+}
+
+func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
+	var req CreateTransactionRequest
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Validate amount
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Amount must be greater than 0",
+		})
+		return
+	}
+
+	// Validate transaction type
+	validTypes := map[string]bool{
+		"income":  true,
+		"expense": true,
+	}
+	if !validTypes[req.Type] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Type must be either 'income' or 'expense'",
+		})
+		return
+	}
+
+	transaction := &model.Transaction{
+		IsRecurring: req.IsRecurring,
+		CategoryID:  req.CategoryID,
+		Amount:      req.Amount,
+		Type:        req.Type,
+		Subtype:     req.Subtype,
+		Description: req.Description,
+		Frequency:   req.Frequency,
+	}
+
+	// Parse dates if provided
+	if req.Date != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.Date)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid date format",
+				"details": "Date must be in RFC3339 format (e.g., 2024-01-15T10:30:00Z)",
+			})
+			return
+		}
+		transaction.Date = &parsedDate
+	}
+	if req.StartDate != nil {
+		parsedStartDate, err := time.Parse("2006-01-02", *req.StartDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid start_date format",
+				"details": "Start date must be in YYYY-MM-DD format (e.g., 2024-01-15)",
+			})
+			return
+		}
+		transaction.StartDate = &parsedStartDate
+	}
+	if req.EndDate != nil {
+		parsedEndDate, err := time.Parse("2006-01-02", *req.EndDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid end_date format",
+				"details": "End date must be in YYYY-MM-DD format (e.g., 2024-12-31)",
+			})
+			return
+		}
+		transaction.EndDate = &parsedEndDate
+	}
+
+	if err := h.transactionService.CreateTransaction(c.Request.Context(), transaction); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to create transaction",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":     "Transaction created successfully",
+		"transaction": transaction,
+	})
+}
+
+func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
+	idParam := c.Param("id")
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid transaction ID",
+		})
+		return
+	}
+
+	transaction, err := h.transactionService.GetTransactionByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "Transaction not found",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, transaction)
+}
+
+func (h *TransactionHandler) GetTransactions(c *gin.Context) {
+	transactions, err := h.transactionService.GetTransactions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+	})
+}
+
+type UpdateTransactionRequest struct {
+	IsRecurring *bool    `json:"is_recurring,omitempty"`
+	CategoryID  *uint    `json:"category_id,omitempty"`
+	Amount      *float64 `json:"amount,omitempty"`
+	Type        *string  `json:"type,omitempty"`
+	Subtype     *string  `json:"subtype,omitempty"`
+	Description *string  `json:"description,omitempty"`
+	Date        *string  `json:"date,omitempty"`
+	Frequency   *string  `json:"frequency,omitempty"`
+	StartDate   *string  `json:"start_date,omitempty"`
+	EndDate     *string  `json:"end_date,omitempty"`
+}
+
+func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
+	idParam := c.Param("id")
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid transaction ID",
+		})
+		return
+	}
+
+	// Get existing transaction
+	transaction, err := h.transactionService.GetTransactionByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "Transaction not found",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	var req UpdateTransactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Update fields if provided
+	if req.IsRecurring != nil {
+		transaction.IsRecurring = *req.IsRecurring
+	}
+	if req.CategoryID != nil {
+		transaction.CategoryID = req.CategoryID
+	}
+	if req.Amount != nil {
+		if *req.Amount <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Amount must be greater than 0",
+			})
+			return
+		}
+		transaction.Amount = *req.Amount
+	}
+	if req.Type != nil {
+		validTypes := map[string]bool{
+			"income":  true,
+			"expense": true,
+		}
+		if !validTypes[*req.Type] {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Type must be either 'income' or 'expense'",
+			})
+			return
+		}
+		transaction.Type = *req.Type
+	}
+	if req.Subtype != nil {
+		transaction.Subtype = req.Subtype
+	}
+	if req.Description != nil {
+		transaction.Description = req.Description
+	}
+	if req.Frequency != nil {
+		transaction.Frequency = req.Frequency
+	}
+
+	// Parse dates if provided
+	if req.Date != nil {
+		parsedDate, err := time.Parse(time.RFC3339, *req.Date)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid date format",
+				"details": "Date must be in RFC3339 format (e.g., 2024-01-15T10:30:00Z)",
+			})
+			return
+		}
+		transaction.Date = &parsedDate
+	}
+	if req.StartDate != nil {
+		parsedStartDate, err := time.Parse("2006-01-02", *req.StartDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid start_date format",
+				"details": "Start date must be in YYYY-MM-DD format (e.g., 2024-01-15)",
+			})
+			return
+		}
+		transaction.StartDate = &parsedStartDate
+	}
+	if req.EndDate != nil {
+		parsedEndDate, err := time.Parse("2006-01-02", *req.EndDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid end_date format",
+				"details": "End date must be in YYYY-MM-DD format (e.g., 2024-12-31)",
+			})
+			return
+		}
+		transaction.EndDate = &parsedEndDate
+	}
+
+	if err := h.transactionService.UpdateTransaction(c.Request.Context(), transaction); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to update transaction",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Transaction updated successfully",
+		"transaction": transaction,
+	})
+}
+
+func (h *TransactionHandler) DeleteTransaction(c *gin.Context) {
+	idParam := c.Param("id")
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid transaction ID",
+		})
+		return
+	}
+
+	if err := h.transactionService.DeleteTransaction(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to delete transaction",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Transaction deleted successfully",
+	})
+}
+
+func (h *TransactionHandler) GetTransactionsByDateRange(c *gin.Context) {
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	if startDateStr == "" || endDateStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Both start_date and end_date query parameters are required",
+		})
+		return
+	}
+
+	startDate, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid start_date format",
+			"details": "Start date must be in YYYY-MM-DD format (e.g., 2024-01-15)",
+		})
+		return
+	}
+
+	endDate, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid end_date format",
+			"details": "End date must be in YYYY-MM-DD format (e.g., 2024-12-31)",
+		})
+		return
+	}
+
+	transactions, err := h.transactionService.GetTransactionsByDateRange(c.Request.Context(), startDate, endDate)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+		"start_date":   startDateStr,
+		"end_date":     endDateStr,
+	})
+}
+
+func (h *TransactionHandler) GetTransactionsByType(c *gin.Context) {
+	transactionType := c.Query("type")
+	if transactionType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Type query parameter is required",
+		})
+		return
+	}
+
+	// Validate type
+	validTypes := map[string]bool{
+		"income":  true,
+		"expense": true,
+	}
+	if !validTypes[transactionType] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Type must be either 'income' or 'expense'",
+		})
+		return
+	}
+
+	// Parse pagination parameters
+	limit := 50 // default
+	offset := 0 // default
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid limit parameter",
+			})
+			return
+		}
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid offset parameter",
+			})
+			return
+		}
+	}
+
+	transactions, err := h.transactionService.GetTransactionsByType(c.Request.Context(), transactionType, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+		"type":         transactionType,
+		"limit":        limit,
+		"offset":       offset,
+	})
+}
+
+func (h *TransactionHandler) GetRecurringTransactions(c *gin.Context) {
+	transactions, err := h.transactionService.GetRecurringTransactions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch recurring transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+	})
+}
+
+func (h *TransactionHandler) GetTransactionsByCategory(c *gin.Context) {
+	categoryIDParam := c.Param("categoryId")
+	var categoryID uint
+	if _, err := fmt.Sscanf(categoryIDParam, "%d", &categoryID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid category ID",
+		})
+		return
+	}
+
+	// Parse pagination parameters
+	limit := 50 // default
+	offset := 0 // default
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid limit parameter",
+			})
+			return
+		}
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid offset parameter",
+			})
+			return
+		}
+	}
+
+	transactions, err := h.transactionService.GetTransactionsByCategory(c.Request.Context(), categoryID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+		"category_id":  categoryID,
+		"limit":        limit,
+		"offset":       offset,
+	})
+}
+
+type GetTransactionsByCategoriesRequest struct {
+	CategoryIDs []uint `json:"category_ids" binding:"required"`
+	Limit       int    `json:"limit,omitempty"`
+	Offset      int    `json:"offset,omitempty"`
+}
+
+func (h *TransactionHandler) GetTransactionsByCategories(c *gin.Context) {
+	var req GetTransactionsByCategoriesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Set defaults
+	limit := req.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	offset := req.Offset
+
+	transactions, err := h.transactionService.GetTransactionsByCategories(c.Request.Context(), req.CategoryIDs, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions":  transactions,
+		"count":         len(transactions),
+		"category_ids":  req.CategoryIDs,
+		"limit":         limit,
+		"offset":        offset,
+	})
+}

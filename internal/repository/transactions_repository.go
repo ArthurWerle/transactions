@@ -16,6 +16,7 @@ type TransactionsRepository interface {
 	FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error)
 	FindByType(transactionType string, limit, offset int) ([]model.Transaction, error)
 	FindRecurring() ([]model.Transaction, error)
+	FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
 	FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error)
 }
 
@@ -83,6 +84,21 @@ func (r *transactionsRepository) FindRecurring() ([]model.Transaction, error) {
 func (r *transactionsRepository) FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	err := r.db.Where("category_id = ?", categoryID).
+		Limit(limit).
+		Offset(offset).
+		Order("date DESC").
+		Find(&transactions).Error
+	return transactions, err
+}
+
+func (r *transactionsRepository) FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error) {
+	var transactions []model.Transaction
+
+	if len(categoriesIDs) == 0 {
+		return transactions, nil
+	}
+
+	err := r.db.Where("category_id in ?", categoriesIDs).
 		Limit(limit).
 		Offset(offset).
 		Order("date DESC").
