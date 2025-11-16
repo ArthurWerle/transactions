@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
     migrated_id INTEGER,
     is_recurring BOOLEAN NOT NULL DEFAULT FALSE,
-    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    category_id INTEGER NOT NULL,
     amount DECIMAL(12, 2) NOT NULL,
     type transaction_type NOT NULL,
     subtype transaction_subtype,
