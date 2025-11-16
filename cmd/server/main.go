@@ -29,7 +29,7 @@ func main() {
 	}
 
 	logger := setupLogger(cfg.Log.Level)
-	logger.Info("starting identity service")
+	logger.Info("starting transaction service")
 
 	db, err := setupDatabase(cfg, logger)
 	if err != nil {

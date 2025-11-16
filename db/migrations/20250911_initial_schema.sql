@@ -18,7 +18,7 @@ DO $$
     END;
 $$;
 
-CREATE TABLE IF NOT EXISTS transactions_v2 (
+CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
     migrated_id INTEGER,
     is_recurring BOOLEAN NOT NULL DEFAULT FALSE,
