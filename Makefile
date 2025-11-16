@@ -56,18 +56,18 @@ docker-build: ## Build Docker image
 
 docker-up: ## Start all services with docker-compose
 	@echo "Starting services with docker-compose..."
-	@docker-compose up -d
+	@docker compose --env-file stack.env up -d
 
 docker-down: ## Stop all services
 	@echo "Stopping services..."
-	@docker-compose down
+	@docker compose --env-file stack.env down
 
 docker-logs: ## View docker-compose logs
-	@docker-compose logs -f
+	@docker compose --env-file stack.env logs -f
 
 compose-up:
 	@echo "Running docker compose up --build..."
-	docker compose up --build
+	docker compose --env-file stack.env up --build
 
 migrate-up: ## Run database migrations
 	@echo "Running migrations..."
