@@ -1,9 +1,6 @@
 # Build stage
 FROM golang:1.25.4-alpine AS builder
 
-# Docker buildx automatically provides TARGETARCH (amd64, arm64, etc.)
-ARG TARGETARCH
-
 # Install build dependencies
 RUN apk add --no-cache git make
 
@@ -18,8 +15,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application for the target architecture
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -a -installsuffix cgo -o /app/bin/server ./cmd/server
+# Build the application - Go will automatically use the builder container's architecture
+# This works because the golang:alpine image matches the host platform
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/server ./cmd/server
 
 # Final stage
 FROM alpine:latest
