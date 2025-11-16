@@ -23,5 +23,5 @@ type Transaction struct {
 
 // TableName specifies the table name for the Transactions model
 func (Transaction) TableName() string {
-	return "transactions_v2"
+	return "transactions"
 }

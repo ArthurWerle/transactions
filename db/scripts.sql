@@ -1,13 +1,13 @@
-select * from transactions_v2 where is_recurring = TRUE;
+select * from transactions where is_recurring = TRUE;
 
 SELECT setval(
-               pg_get_serial_sequence('transactions_v2', 'id'),
-               COALESCE((SELECT MAX(id) FROM transactions_v2), 0) + 1,
+               pg_get_serial_sequence('transactions', 'id'),
+               COALESCE((SELECT MAX(id) FROM transactions), 0) + 1,
                false
        );
 
 
-INSERT INTO transactions_v2 (
+INSERT INTO transactions (
     migrated_id, category_id, amount, type, description,
     frequency, start_date, end_date,
     created_at, updated_at, is_recurring
@@ -41,7 +41,7 @@ FROM recurring_transactions r
 CREATE OR REPLACE FUNCTION sync_transaction_to_v2()
     RETURNS trigger AS $$
 BEGIN
-    INSERT INTO transactions_v2 (
+    INSERT INTO transactions (
         migrated_id,
         is_recurring,
         category_id,
@@ -81,7 +81,7 @@ EXECUTE FUNCTION sync_transaction_to_v2();
 CREATE OR REPLACE FUNCTION sync_recurring_to_v2()
     RETURNS trigger AS $$
 BEGIN
-    INSERT INTO transactions_v2 (
+    INSERT INTO transactions (
         migrated_id,
         is_recurring,
         category_id,
@@ -123,7 +123,7 @@ EXECUTE FUNCTION sync_recurring_to_v2();
 
 
 
-INSERT INTO transactions_v2 (
+INSERT INTO transactions (
     migrated_id,
     is_recurring,
     category_id,
