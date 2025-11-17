@@ -23,6 +23,7 @@ func NewTransactionHandler(transactionService service.TransactionsService) *Tran
 type CreateTransactionRequest struct {
 	IsRecurring bool    `json:"is_recurring"`
 	CategoryID  *uint   `json:"category_id,omitempty"`
+	CreatedById uint    `json:"created_by_id"`
 	Amount      float64 `json:"amount" binding:"required"`
 	Type        string  `json:"type" binding:"required"`
 	Subtype     *string `json:"subtype,omitempty"`
@@ -67,6 +68,7 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 	transaction := &model.Transaction{
 		IsRecurring: req.IsRecurring,
 		CategoryID:  req.CategoryID,
+		CreatedById: req.CreatedById,
 		Amount:      req.Amount,
 		Type:        req.Type,
 		Subtype:     req.Subtype,

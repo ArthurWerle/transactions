@@ -105,8 +105,8 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 	{
 		transactions := v1.Group("/transactions")
 		{
-			transactions.GET("/", transactionHandler.GetTransactions)
-			transactions.POST("/", transactionHandler.CreateTransaction)
+			transactions.GET("", transactionHandler.GetTransactions)
+			transactions.POST("", transactionHandler.CreateTransaction)
 			transactions.GET("/:id", transactionHandler.GetTransactionByID)
 			transactions.PUT("/:id", transactionHandler.UpdateTransaction)
 			transactions.DELETE("/:id", transactionHandler.DeleteTransaction)

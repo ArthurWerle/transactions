@@ -7,6 +7,7 @@ import (
 type Transaction struct {
 	ID          uint       `gorm:"primaryKey" json:"id"`
 	MigratedID  *uint      `gorm:"column:migrated_id" json:"migrated_id,omitempty"`
+	CreatedById uint       `gorm:"column:created_by_id" json:"created_by_id,omitempty"`
 	IsRecurring bool       `gorm:"not null;default:false" json:"is_recurring"`
 	CategoryID  *uint      `gorm:"column:category_id" json:"category_id,omitempty"`
 	Amount      float64    `gorm:"type:decimal(12,2);not null" json:"amount"` // Consider using decimal.Decimal for precision
