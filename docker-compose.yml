@@ -46,6 +46,7 @@ services:
     restart: unless-stopped
     networks:
       - transactions-network
+      - financer-services_back-end
 
 volumes:
   postgres_data:
@@ -54,4 +55,6 @@ networks:
   transactions-network:
     driver: bridge
   financer-services_database:
+    external: true
+  financer-services_back-end:
     external: true
