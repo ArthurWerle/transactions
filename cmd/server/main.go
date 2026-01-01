@@ -113,6 +113,8 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.POST("/by-categories", transactionHandler.GetTransactionsByCategories)
 			transactions.POST("/by-category/:id", transactionHandler.GetTransactionsByCategory)
 			transactions.POST("/by-date-range", transactionHandler.GetTransactionsByDateRange)
+			transactions.GET("/latest", transactionHandler.GetLatestTransactions)
+			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)
 		}
 	}
 

@@ -3,6 +3,8 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/model"
@@ -148,10 +150,79 @@ func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 }
 
 func (h *TransactionHandler) GetTransactions(c *gin.Context) {
-	transactions, err := h.transactionService.GetTransactions(c.Request.Context())
+	currentMonth := false
+	if currentMonthStr := c.Query("currentMonth"); currentMonthStr == "true" {
+		currentMonth = true
+	}
+
+	var categoryIDs []uint
+	if categoryStr := c.Query("category"); categoryStr != "" {
+		categoryParts := strings.Split(categoryStr, ",")
+		for _, part := range categoryParts {
+			categoryID, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":   "Invalid category ID",
+					"details": fmt.Sprintf("Cannot parse category ID: %s", part),
+				})
+				return
+			}
+			categoryIDs = append(categoryIDs, uint(categoryID))
+		}
+	}
+
+	var transactions []model.Transaction
+	var err error
+
+	if currentMonth || len(categoryIDs) > 0 {
+		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs)
+	} else {
+		transactions, err = h.transactionService.GetTransactions(c.Request.Context())
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to fetch transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+	})
+}
+
+func (h *TransactionHandler) GetLatestTransactions(c *gin.Context) {
+	var transactions []model.Transaction
+	var err error
+
+	transactions, err = h.transactionService.GetLatestTransactions(c.Request.Context())
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch latest transactions",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"count":        len(transactions),
+	})
+}
+
+func (h *TransactionHandler) GetBiggestTransactions(c *gin.Context) {
+	var transactions []model.Transaction
+	var err error
+
+	transactions, err = h.transactionService.GetBiggestTransactions(c.Request.Context())
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch biggest transactions",
 			"details": err.Error(),
 		})
 		return

@@ -11,6 +11,9 @@ type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
+	FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
+	FindBiggest() ([]model.Transaction, error)
+	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
 	Delete(id uint) error
 	FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error)
@@ -44,6 +47,39 @@ func (r *transactionsRepository) FindByID(id uint) (*model.Transaction, error) {
 func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	err := r.db.Order("date DESC").Find(&transactions).Error
+	return transactions, err
+}
+
+func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error) {
+	var transactions []model.Transaction
+	query := r.db.Model(&model.Transaction{})
+
+	if currentMonth {
+		now := time.Now()
+		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
+		query = query.Where("date >= ? AND date <= ?", startOfMonth, endOfMonth)
+	}
+
+	if len(categoryIDs) > 0 {
+		query = query.Where("category_id IN ?", categoryIDs)
+	}
+
+	err := query.Order("date DESC").Find(&transactions).Error
+	return transactions, err
+}
+
+func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
+	var transactions []model.Transaction
+	query := r.db.Model(&model.Transaction{})
+	err := query.Order("date DESC").Limit(5).Find(&transactions).Error
+	return transactions, err
+}
+
+func (r *transactionsRepository) FindBiggest() ([]model.Transaction, error) {
+	var transactions []model.Transaction
+	query := r.db.Model(&model.Transaction{})
+	err := query.Order("amount DESC").Limit(5).Find(&transactions).Error
 	return transactions, err
 }
 
