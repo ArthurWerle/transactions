@@ -45,6 +45,7 @@ func main() {
 
 	if err := db.AutoMigrate(
 		&model.Transaction{},
+		&model.Category{},
 	); err != nil {
 		logger.Error("failed to auto migrate", "error", err)
 		os.Exit(1)
@@ -54,7 +55,11 @@ func main() {
 	transactionService := service.NewTransactionsService(transactionRepo)
 	transactionHandler := handler.NewTransactionHandler(transactionService)
 
-	router := setupRouter(cfg, logger, transactionHandler)
+	categoryRepo := repository.NewCategoryRepository(db)
+	categoryService := service.NewCategoryService(categoryRepo)
+	categoryHandler := handler.NewCategoryHandler(categoryService)
+
+	router := setupRouter(cfg, logger, transactionHandler, categoryHandler)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.Server.Port),
@@ -87,7 +92,7 @@ func main() {
 	logger.Info("server exited")
 }
 
-func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler) *gin.Engine {
+func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler, categoryHandler *handler.CategoryHandler) *gin.Engine {
 	if cfg.Log.Level != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -115,6 +120,15 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.POST("/by-date-range", transactionHandler.GetTransactionsByDateRange)
 			transactions.GET("/latest", transactionHandler.GetLatestTransactions)
 			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)
+		}
+
+		categories := v1.Group("/categories")
+		{
+			categories.GET("", categoryHandler.GetCategories)
+			categories.POST("", categoryHandler.CreateCategory)
+			categories.GET("/:id", categoryHandler.GetCategoryByID)
+			categories.PUT("/:id", categoryHandler.UpdateCategory)
+			categories.DELETE("/:id", categoryHandler.DeleteCategory)
 		}
 	}
 
