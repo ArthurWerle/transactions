@@ -36,16 +36,3 @@ CREATE TABLE IF NOT EXISTS transactions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Add foreign key constraint if categories table exists
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'categories') THEN
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.table_constraints
-            WHERE table_name = 'transactions' AND constraint_type = 'FOREIGN KEY'
-        ) THEN
-            ALTER TABLE transactions ADD CONSTRAINT fk_category_id
-                FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL;
-        END IF;
-    END IF;
-END $$;
