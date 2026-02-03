@@ -12,6 +12,9 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download
 
+# Cache bust arg - change this value to force rebuild
+ARG CACHE_BUST=1
+
 # Copy source code
 COPY . .
 
