@@ -72,14 +72,14 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.db.Model(&model.Transaction{})
-	err := query.Order("date DESC").Limit(5).Find(&transactions).Error
+	err := query.Order("date DESC").Limit(3).Find(&transactions).Error
 	return transactions, err
 }
 
 func (r *transactionsRepository) FindBiggest() ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.db.Model(&model.Transaction{})
-	err := query.Order("amount DESC").Limit(5).Find(&transactions).Error
+	err := query.Order("amount DESC").Limit(3).Find(&transactions).Error
 	return transactions, err
 }
 
