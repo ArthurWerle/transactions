@@ -21,6 +21,7 @@ type TransactionsRepository interface {
 	FindRecurring() ([]model.Transaction, error)
 	FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
 	FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error)
+	PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error
 }
 
 type transactionsRepository struct {
@@ -140,4 +141,16 @@ func (r *transactionsRepository) FindByCategories(categoriesIDs []uint, limit, o
 		Order("date DESC").
 		Find(&transactions).Error
 	return transactions, err
+}
+
+func (r *transactionsRepository) PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(original).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(prepayment).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
