@@ -600,3 +600,43 @@ func (h *TransactionHandler) GetTransactionsByCategories(c *gin.Context) {
 		"offset":       offset,
 	})
 }
+
+func (h *TransactionHandler) PrepayTransaction(c *gin.Context) {
+	idParam := c.Param("id")
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid transaction ID",
+		})
+		return
+	}
+
+	result, err := h.transactionService.PrepayTransaction(c.Request.Context(), id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err.Error() == "transaction is not recurring" ||
+			err.Error() == "recurring transaction has no end_date defined" ||
+			err.Error() == "recurring transaction has no start_date defined" ||
+			err.Error() == "recurring transaction has already ended" ||
+			err.Error() == "no remaining installments to prepay" {
+			status = http.StatusBadRequest
+		}
+		if err.Error() == "record not found" {
+			status = http.StatusNotFound
+		}
+
+		c.JSON(status, gin.H{
+			"error":   "Failed to prepay transaction",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":              "Transaction prepaid successfully",
+		"original_transaction": result.OriginalTransaction,
+		"prepay_transaction":   result.PrepayTransaction,
+		"remaining_months":     result.RemainingMonths,
+		"prepaid_amount":       result.PrepaidAmount,
+	})
+}

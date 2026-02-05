@@ -15,6 +15,7 @@ func RunMigrations(db *gorm.DB, logger *slog.Logger) error {
 	files := []string{
 		"20250911_initial_schema.sql",
 		"20250912_create_categories.sql",
+		"20250913_add_prepaid_from_id.sql",
 	}
 
 	for _, file := range files {

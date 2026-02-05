@@ -16,9 +16,10 @@ type Transaction struct {
 	Description *string    `gorm:"type:text" json:"description,omitempty"`
 	Date        *time.Time `gorm:"type:timestamptz" json:"date,omitempty"`
 	Frequency   *string    `gorm:"type:varchar(50)" json:"frequency,omitempty"`
-	StartDate   *time.Time `gorm:"type:date;column:start_date" json:"start_date,omitempty"`
-	EndDate     *time.Time `gorm:"type:date;column:end_date" json:"end_date,omitempty"`
-	CreatedAt   time.Time  `gorm:"type:timestamptz;default:CURRENT_TIMESTAMP" json:"created_at"`
+	StartDate     *time.Time `gorm:"type:date;column:start_date" json:"start_date,omitempty"`
+	EndDate       *time.Time `gorm:"type:date;column:end_date" json:"end_date,omitempty"`
+	PrepaidFromID *uint      `gorm:"column:prepaid_from_id" json:"prepaid_from_id,omitempty"`
+	CreatedAt     time.Time  `gorm:"type:timestamptz;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt   time.Time  `gorm:"type:timestamptz;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }
 
