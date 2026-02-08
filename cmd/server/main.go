@@ -16,6 +16,7 @@ import (
 	"github.com/ArthurWerle/transactions/internal/model"
 	"github.com/ArthurWerle/transactions/internal/repository"
 	"github.com/ArthurWerle/transactions/internal/service"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -98,6 +99,15 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 	}
 
 	router := gin.New()
+
+	router.Use(cors.New(cors.Config{
+		AllowAllOrigins:  true,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
