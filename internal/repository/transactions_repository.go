@@ -94,7 +94,11 @@ func (r *transactionsRepository) Delete(id uint) error {
 
 func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Where("date >= ? AND date <= ?", startDate, endDate).
+	err := r.db.Where(
+		"(is_recurring = ? AND date >= ? AND date <= ?) OR (is_recurring = ? AND start_date <= ? AND end_date >= ?)",
+		false, startDate, endDate,
+		true, endDate, startDate,
+	).
 		Order("date DESC").
 		Find(&transactions).Error
 	return transactions, err
