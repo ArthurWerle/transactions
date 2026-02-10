@@ -69,6 +69,22 @@ compose-up:
 	@echo "Running docker compose up --build..."
 	docker compose --env-file stack.env up --build
 
+# Staging Docker commands
+staging-up: ## Start all services with staging docker-compose
+	@echo "Starting staging services..."
+	@docker compose -f docker-compose.staging.yml --env-file stack.env up -d
+
+staging-down: ## Stop staging services
+	@echo "Stopping staging services..."
+	@docker compose -f docker-compose.staging.yml --env-file stack.env down
+
+staging-logs: ## View staging docker-compose logs
+	@docker compose -f docker-compose.staging.yml --env-file stack.env logs -f
+
+staging-compose-up: ## Build and start staging services
+	@echo "Running staging docker compose up --build..."
+	docker compose -f docker-compose.staging.yml --env-file stack.env up --build
+
 migrate-up: ## Run database migrations
 	@echo "Running migrations..."
 	@if command -v atlas > /dev/null; then \
