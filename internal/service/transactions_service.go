@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/model"
@@ -19,7 +20,7 @@ type PrepayResult struct {
 
 type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
-	GetAverageByType(ctx context.Context) ([]TypeAverage, error)
+	GetAverageByType(ctx context.Context) ([]AverageType, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
@@ -77,27 +78,68 @@ func (s *transactionsService) DeleteTransaction(ctx context.Context, id uint) er
 	return s.transactionRepo.Delete(id)
 }
 
-type TypeAverage struct {
-	Type    string
-	Average float64
+type AverageType struct {
+	TypeName string
+	Average  float64
 }
 
-func (s *transactionsService) GetAverageByType(ctx context.Context) ([]TypeAverage, error) {
-	results, err := s.transactionRepo.GetByType(ctx)
+func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageType, error) {
+	transactions, err := s.transactionRepo.FindAll()
 	if err != nil {
-		return nil, err
+		log.Printf("[TypeService.GetAverageByType] ERROR: Failed to fetch transactions: %v", err)
+		return nil, fmt.Errorf("failed to fetch transactions: %w", err)
 	}
 
-	averages := make([]TypeAverage, 0, len(results))
+	// Group monthly sums by type
+	// Key: "type-year-month", Value: sum for that month
+	monthlySumsByTypeMonth := make(map[string]float64)
 
-	for _, r := range results {
-		averages = append(averages, TypeAverage{
-			Type:    r.Type,
-			Average: r.Total / float64(r.Count),
+	for _, tx := range transactions {
+		if tx.Date == nil {
+			continue
+		}
+		monthKey := fmt.Sprintf("%s-%d-%d",
+			tx.Type,
+			tx.Date.Year(),
+			tx.Date.Month())
+
+		monthlySumsByTypeMonth[monthKey] += tx.Amount
+	}
+
+	// Group monthly sums by type only (to calculate average across months)
+	monthlySumsByType := make(map[string][]float64)
+
+	for key, sum := range monthlySumsByTypeMonth {
+		// Extract type name (everything before the first dash followed by a digit)
+		typeName := extractTypeName(key)
+		monthlySumsByType[typeName] = append(monthlySumsByType[typeName], sum)
+	}
+
+	var result []AverageType
+	for typeName, monthlySums := range monthlySumsByType {
+		var total float64
+		for _, sum := range monthlySums {
+			total += sum
+		}
+		average := total / float64(len(monthlySums))
+
+		result = append(result, AverageType{
+			TypeName: typeName,
+			Average:  average,
 		})
 	}
 
-	return averages, nil
+	return result, nil
+}
+
+func extractTypeName(key string) string {
+	// Find the position where the year starts (first digit after a dash)
+	for i := 0; i < len(key); i++ {
+		if key[i] == '-' && i+1 < len(key) && key[i+1] >= '0' && key[i+1] <= '9' {
+			return key[:i]
+		}
+	}
+	return key
 }
 
 func (s *transactionsService) GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error) {
