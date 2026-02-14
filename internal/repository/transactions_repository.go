@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/model"
@@ -9,6 +10,7 @@ import (
 
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
+	GetByType(ctx context.Context) ([]TypeAggregate, error)
 	FindByID(id uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
 	FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
@@ -34,6 +36,26 @@ func NewTransactionsRepository(db *gorm.DB) TransactionsRepository {
 
 func (r *transactionsRepository) Create(transaction *model.Transaction) error {
 	return r.db.Create(transaction).Error
+}
+
+type TypeAggregate struct {
+	Type  string
+	Total float64
+	Count int64
+}
+
+func (r *transactionsRepository) GetByType(ctx context.Context) ([]TypeAggregate, error) {
+	var results []TypeAggregate
+
+	err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Select("type, SUM(amount) AS total, COUNT(*) AS count").
+		Group("type").
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (r *transactionsRepository) FindByID(id uint) (*model.Transaction, error) {

@@ -19,6 +19,7 @@ type PrepayResult struct {
 
 type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
+	GetAverageByType(ctx context.Context) ([]TypeAverage, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
@@ -74,6 +75,29 @@ func (s *transactionsService) UpdateTransaction(ctx context.Context, transaction
 
 func (s *transactionsService) DeleteTransaction(ctx context.Context, id uint) error {
 	return s.transactionRepo.Delete(id)
+}
+
+type TypeAverage struct {
+	Type    string
+	Average float64
+}
+
+func (s *transactionsService) GetAverageByType(ctx context.Context) ([]TypeAverage, error) {
+	results, err := s.transactionRepo.GetByType(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	averages := make([]TypeAverage, 0, len(results))
+
+	for _, r := range results {
+		averages = append(averages, TypeAverage{
+			Type:    r.Type,
+			Average: r.Total / float64(r.Count),
+		})
+	}
+
+	return averages, nil
 }
 
 func (s *transactionsService) GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error) {

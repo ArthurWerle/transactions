@@ -131,6 +131,7 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.POST("/by-date-range", transactionHandler.GetTransactionsByDateRange)
 			transactions.GET("/latest", transactionHandler.GetLatestTransactions)
 			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)
+			transactions.GET("/average/by-type", transactionHandler.GetAverageByType)
 		}
 
 		categories := v1.Group("/categories")
