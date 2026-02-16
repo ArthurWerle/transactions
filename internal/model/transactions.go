@@ -5,7 +5,7 @@ import (
 )
 
 type Transaction struct {
-	ID            uint       `gorm:"primaryKey" json:"id"`
+	ID            uint       `gorm:"primaryKey;autoIncrement" json:"id"`
 	MigratedID    *uint      `gorm:"column:migrated_id" json:"migrated_id"`
 	CreatedById   uint       `gorm:"column:created_by_id" json:"created_by_id"`
 	IsRecurring   bool       `gorm:"not null;default:false" json:"is_recurring"`
