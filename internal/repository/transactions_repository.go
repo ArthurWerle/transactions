@@ -59,7 +59,7 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 		now := time.Now()
 		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
-		query = query.Where("date >= ? AND date <= ?", startOfMonth, endOfMonth)
+		query = query.Where("(date >= ? AND date <= ? OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))", startOfMonth, endOfMonth, startOfMonth, endOfMonth)
 	}
 
 	if len(categoryIDs) > 0 {
