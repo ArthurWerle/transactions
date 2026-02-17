@@ -231,6 +231,6 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 func monthsBetween(start, end time.Time) int {
 	years := end.Year() - start.Year()
 	months := int(end.Month()) - int(start.Month())
-	total := years*12 + months + 1
+	total := years*12 + months
 	return total
 }
