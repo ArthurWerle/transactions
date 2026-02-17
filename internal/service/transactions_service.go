@@ -163,6 +163,14 @@ func (s *transactionsService) GetTransactionsByCategories(ctx context.Context, c
 }
 
 func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*PrepayResult, error) {
+	alreadyPrepaid, err := s.transactionRepo.FindByPrepaidID(id)
+	if err != nil {
+		return nil, err
+	}
+	if alreadyPrepaid != nil {
+		return nil, errors.New("transaction was already prepaid")
+	}
+
 	original, err := s.transactionRepo.FindByID(id)
 	if err != nil {
 		return nil, err

@@ -10,6 +10,7 @@ import (
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
+	FindByPrepaidID(prepaidID uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
 	FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
 	FindBiggest() ([]model.Transaction, error)
@@ -39,6 +40,15 @@ func (r *transactionsRepository) Create(transaction *model.Transaction) error {
 func (r *transactionsRepository) FindByID(id uint) (*model.Transaction, error) {
 	var transaction model.Transaction
 	err := r.db.First(&transaction, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &transaction, nil
+}
+
+func (r *transactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {
+	var transaction model.Transaction
+	err := r.db.Where("prepaid_from_id = ?", prepaidID).First(&transaction).Error
 	if err != nil {
 		return nil, err
 	}
