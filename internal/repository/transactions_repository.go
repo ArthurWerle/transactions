@@ -59,7 +59,7 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 		now := time.Now()
 		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
-		query = query.Where("(date >= ? AND date <= ? OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))", startOfMonth, endOfMonth, startOfMonth, endOfMonth)
+		query = query.Where("(date >= ? AND date <= ?) OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))", startOfMonth, endOfMonth, endOfMonth, startOfMonth)
 	}
 
 	if len(categoryIDs) > 0 {
@@ -80,7 +80,7 @@ func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 func (r *transactionsRepository) FindBiggest() ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.db.Model(&model.Transaction{})
-	err := query.Where("type = ? AND date_trunc('month', CURRENT_DATE) = date_trunc('month', date)", model.Expense).Order("amount DESC").Limit(3).Find(&transactions).Error
+	err := query.Where("type = ? AND (date_trunc('month', CURRENT_DATE) = date_trunc('month', date) OR (is_recurring = true AND start_date <= date_trunc('month', CURRENT_DATE) + interval '1 month' - interval '1 second' AND (end_date >= date_trunc('month', CURRENT_DATE) OR end_date IS NULL)))", model.Expense).Order("amount DESC").Limit(3).Find(&transactions).Error
 	return transactions, err
 }
 
