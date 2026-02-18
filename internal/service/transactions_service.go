@@ -205,7 +205,7 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 	}
 	prepayDesc := fmt.Sprintf("Adiantamento de %d parcelas de %s", remainingMonths, originalDesc)
 
-	newEndDate := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	newEndDate := time.Now()
 	original.EndDate = &newEndDate
 
 	prepayment := &model.Transaction{
