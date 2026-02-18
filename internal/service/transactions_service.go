@@ -168,6 +168,10 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 		return nil, err
 	}
 
+	if original.IsPrepaid {
+		return nil, errors.New("transaction was already prepaid")
+	}
+
 	if !original.IsRecurring {
 		return nil, errors.New("transaction is not recurring")
 	}
