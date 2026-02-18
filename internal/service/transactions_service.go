@@ -23,7 +23,7 @@ type TransactionsService interface {
 	GetAverageByType(ctx context.Context) ([]AverageType, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
-	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
+	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error)
 	GetLatestTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetBiggestTransactions(ctx context.Context) ([]model.Transaction, error)
 	UpdateTransaction(ctx context.Context, transaction *model.Transaction) error
@@ -66,8 +66,8 @@ func (s *transactionsService) GetBiggestTransactions(ctx context.Context) ([]mod
 	return s.transactionRepo.FindBiggest()
 }
 
-func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint) ([]model.Transaction, error) {
-	return s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs)
+func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error) {
+	return s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs, searchQuery)
 }
 
 func (s *transactionsService) UpdateTransaction(ctx context.Context, transaction *model.Transaction) error {

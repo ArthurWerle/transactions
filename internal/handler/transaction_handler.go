@@ -171,11 +171,16 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		}
 	}
 
+	var searchQuery string
+	if queryStr := c.Query("query"); queryStr != "" {
+		searchQuery = queryStr
+	}
+
 	var transactions []model.Transaction
 	var err error
 
 	if currentMonth || len(categoryIDs) > 0 {
-		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs)
+		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery)
 	} else {
 		transactions, err = h.transactionService.GetTransactions(c.Request.Context())
 	}

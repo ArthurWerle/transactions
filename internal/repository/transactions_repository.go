@@ -12,7 +12,7 @@ type TransactionsRepository interface {
 	FindByID(id uint) (*model.Transaction, error)
 	FindByPrepaidID(prepaidID uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
-	FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error)
+	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error)
 	FindBiggest() ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
@@ -69,7 +69,7 @@ func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error) {
+func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid)
 
@@ -82,6 +82,10 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 
 	if len(categoryIDs) > 0 {
 		query = query.Where("category_id IN ?", categoryIDs)
+	}
+	
+	if searchQuery != "" {
+		query = query.Where("description LIKE ?", "%"+searchQuery+"%")
 	}
 
 	err := query.Order("date DESC").Find(&transactions).Error
