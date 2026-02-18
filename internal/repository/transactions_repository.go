@@ -65,7 +65,7 @@ func (r *transactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transac
 
 func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Order("date DESC").Find(&transactions).Error
+	err := r.db.Scopes(WithIsPrepaid).Order("is_recurring, date DESC").Find(&transactions).Error
 	return transactions, err
 }
 
@@ -88,7 +88,7 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 		query = query.Where("description LIKE ?", "%"+searchQuery+"%")
 	}
 
-	err := query.Order("is_recurring DESC, date DESC").Find(&transactions).Error
+	err := query.Order("is_recurring, date DESC").Find(&transactions).Error
 	return transactions, err
 }
 
