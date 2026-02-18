@@ -21,6 +21,7 @@ type PrepayResult struct {
 type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
 	GetAverageByType(ctx context.Context) ([]AverageType, error)
+	GetAverageByCategory(ctx context.Context) ([]AverageByCategory, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error)
@@ -83,6 +84,13 @@ type AverageType struct {
 	Average  float64
 }
 
+type AverageByCategory struct {
+	CategoryID   uint    `json:"category_id"`
+	CategoryName string  `json:"category_name"`
+	Average      float64 `json:"average"`
+	TotalSpent   float64 `json:"total_spent"`
+}
+
 func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageType, error) {
 	transactions, err := s.transactionRepo.FindAll()
 	if err != nil {
@@ -126,6 +134,50 @@ func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageTy
 		result = append(result, AverageType{
 			TypeName: typeName,
 			Average:  average,
+		})
+	}
+
+	return result, nil
+}
+
+func (s *transactionsService) GetAverageByCategory(ctx context.Context) ([]AverageByCategory, error) {
+	earliestDate, err := s.transactionRepo.FindEarliestDate()
+	if err != nil {
+		log.Printf("[TransactionsService.GetAverageByCategory] ERROR: Failed to fetch earliest date: %v", err)
+		return nil, fmt.Errorf("failed to fetch earliest transaction date: %w", err)
+	}
+
+	var startDate time.Time
+	if earliestDate != nil {
+		startDate = time.Date(earliestDate.Year(), earliestDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		startDate = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	now := time.Now()
+	currentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	totalMonths := monthsBetween(startDate, currentMonth) + 1
+	if totalMonths < 1 {
+		totalMonths = 1
+	}
+
+	summaries, err := s.transactionRepo.FindExpenseSummaryByCategory()
+	if err != nil {
+		log.Printf("[TransactionsService.GetAverageByCategory] ERROR: Failed to fetch summaries: %v", err)
+		return nil, fmt.Errorf("failed to fetch expense summaries by category: %w", err)
+	}
+
+	var result []AverageByCategory
+	for _, summary := range summaries {
+		catID := uint(0)
+		if summary.CategoryID != nil {
+			catID = *summary.CategoryID
+		}
+		result = append(result, AverageByCategory{
+			CategoryID:   catID,
+			CategoryName: summary.CategoryName,
+			Average:      summary.TotalSpent / float64(totalMonths),
+			TotalSpent:   summary.TotalSpent,
 		})
 	}
 
