@@ -7,6 +7,12 @@ import (
 	"gorm.io/gorm"
 )
 
+type CategoryExpenseSummary struct {
+	CategoryID   *uint   `gorm:"column:category_id"`
+	CategoryName string  `gorm:"column:category_name"`
+	TotalSpent   float64 `gorm:"column:total_spent"`
+}
+
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
@@ -23,6 +29,8 @@ type TransactionsRepository interface {
 	FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
 	FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error)
 	PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error
+	FindEarliestDate() (*time.Time, error)
+	FindExpenseSummaryByCategory() ([]CategoryExpenseSummary, error)
 }
 
 type transactionsRepository struct {
@@ -177,4 +185,33 @@ func (r *transactionsRepository) PrepayTransaction(original *model.Transaction, 
 		}
 		return nil
 	})
+}
+
+func (r *transactionsRepository) FindEarliestDate() (*time.Time, error) {
+	var result struct {
+		MinDate *time.Time `gorm:"column:min_date"`
+	}
+	err := r.db.Raw("SELECT MIN(date) as min_date FROM transactions WHERE date IS NOT NULL AND deleted_at IS NULL").Scan(&result).Error
+	if err != nil {
+		return nil, err
+	}
+	return result.MinDate, nil
+}
+
+func (r *transactionsRepository) FindExpenseSummaryByCategory() ([]CategoryExpenseSummary, error) {
+	var results []CategoryExpenseSummary
+	err := r.db.Raw(`
+		SELECT
+			t.category_id,
+			c.name as category_name,
+			SUM(t.amount) as total_spent
+		FROM transactions t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.type = 'expense'
+			AND t.category_id IS NOT NULL
+			AND t.date IS NOT NULL
+			AND t.deleted_at IS NULL
+		GROUP BY t.category_id, c.name
+	`).Scan(&results).Error
+	return results, err
 }

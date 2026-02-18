@@ -624,6 +624,21 @@ func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 	})
 }
 
+func (h *TransactionHandler) GetAverageByCategory(c *gin.Context) {
+	result, err := h.transactionService.GetAverageByCategory(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get average by category",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"averageByCategory": result,
+	})
+}
+
 func (h *TransactionHandler) PrepayTransaction(c *gin.Context) {
 	idParam := c.Param("id")
 	var id uint
