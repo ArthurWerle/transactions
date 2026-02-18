@@ -85,7 +85,7 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 	}
 
 	if searchQuery != "" {
-		query = query.Where("description LIKE ?", "%"+searchQuery+"%")
+		query = query.Where("description ILIKE ?", "%"+searchQuery+"%")
 	}
 
 	err := query.Order("is_recurring, date DESC").Find(&transactions).Error
