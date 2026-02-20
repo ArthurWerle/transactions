@@ -405,6 +405,70 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 	})
 }
 
+type EndRecurringTransactionRequest struct {
+	EndDate string `json:"end_date" binding:"required"`
+}
+
+func (h *TransactionHandler) EndRecurringTransaction(c *gin.Context) {
+	idParam := c.Param("id")
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid transaction ID",
+		})
+		return
+	}
+
+	transaction, err := h.transactionService.GetTransactionByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "Transaction not found",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	if !transaction.IsRecurring {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Transaction is not recurring",
+		})
+		return
+	}
+
+	var req EndRecurringTransactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": "end_date is required in YYYY-MM-DD format (e.g., 2026-03-01)",
+		})
+		return
+	}
+
+	parsedEndDate, err := time.Parse("2006-01-02", req.EndDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid end_date format",
+			"details": "End date must be in YYYY-MM-DD format (e.g., 2026-03-01)",
+		})
+		return
+	}
+
+	transaction.EndDate = &parsedEndDate
+
+	if err := h.transactionService.UpdateTransaction(c.Request.Context(), transaction); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to end recurring transaction",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Recurring transaction ended successfully",
+		"transaction": transaction,
+	})
+}
+
 func (h *TransactionHandler) DeleteTransaction(c *gin.Context) {
 	idParam := c.Param("id")
 	var id uint
