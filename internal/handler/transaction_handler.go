@@ -154,7 +154,7 @@ func computeTotalPaid(tx *model.Transaction) *float64 {
 
 	years := effectiveEnd.Year() - startDate.Year()
 	months := int(effectiveEnd.Month()) - int(startDate.Month())
-	monthsPaid := years*12 + months + 1 // +1 to include the start month
+	monthsPaid := years*12 + months
 
 	total := tx.Amount * float64(monthsPaid)
 	return &total
