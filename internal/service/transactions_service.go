@@ -170,7 +170,7 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 		rangeEnd = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	}
 
-	totalMonths := monthsBetween(rangeStart, rangeEnd) + 1
+	totalMonths := monthsBetween(rangeStart, rangeEnd)
 	if totalMonths < 1 {
 		totalMonths = 1
 	}
@@ -258,7 +258,7 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 		return nil, errors.New("recurring transaction has already ended")
 	}
 
-	remainingMonths := monthsBetween(today, endDate)
+	remainingMonths := monthsBetween(today, endDate) - 1
 	if remainingMonths <= 0 {
 		return nil, errors.New("no remaining installments to prepay")
 	}
@@ -301,8 +301,7 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 func monthsBetween(start, end time.Time) int {
 	years := end.Year() - start.Year()
 	months := int(end.Month()) - int(start.Month())
-	total := years*12 + months
-	return total
+	return years*12 + months + 1
 }
 
 func (s *transactionsService) GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error) {
