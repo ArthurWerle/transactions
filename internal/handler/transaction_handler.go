@@ -130,6 +130,7 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 type TransactionDetailResponse struct {
 	*model.Transaction
 	TotalPaid *float64 `json:"total_paid,omitempty"`
+	TotalLeft *float64 `json:"total_left,omitempty"`
 }
 
 func computeTotalPaid(tx *model.Transaction) *float64 {
@@ -160,6 +161,28 @@ func computeTotalPaid(tx *model.Transaction) *float64 {
 	return &total
 }
 
+func computeTotalLeft(tx *model.Transaction) *float64 {
+	if !tx.IsRecurring || tx.StartDate == nil || tx.EndDate == nil {
+		return nil
+	}
+
+	now := time.Now()
+	effectiveStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(tx.EndDate.Year(), tx.EndDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	if endDate.Before(effectiveStart) {
+		zero := 0.0
+		return &zero
+	}
+
+	years := endDate.Year() - effectiveStart.Year()
+	months := int(endDate.Month()) - int(effectiveStart.Month())
+	monthsLeft := years*12 + months
+
+	total := tx.Amount * float64(monthsLeft)
+	return &total
+}
+
 func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 	idParam := c.Param("id")
 	var id uint
@@ -182,6 +205,7 @@ func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 	c.JSON(http.StatusOK, TransactionDetailResponse{
 		Transaction: transaction,
 		TotalPaid:   computeTotalPaid(transaction),
+		TotalLeft:   computeTotalLeft(transaction),
 	})
 }
 
