@@ -749,7 +749,33 @@ func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 }
 
 func (h *TransactionHandler) GetAverageByCategory(c *gin.Context) {
-	result, err := h.transactionService.GetAverageByCategory(c.Request.Context())
+	var startDate, endDate *time.Time
+
+	if s := c.Query("start_date"); s != "" {
+		parsed, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid start_date format",
+				"details": "start_date must be in YYYY-MM-DD format",
+			})
+			return
+		}
+		startDate = &parsed
+	}
+
+	if s := c.Query("end_date"); s != "" {
+		parsed, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid end_date format",
+				"details": "end_date must be in YYYY-MM-DD format",
+			})
+			return
+		}
+		endDate = &parsed
+	}
+
+	result, err := h.transactionService.GetAverageByCategory(c.Request.Context(), startDate, endDate)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to get average by category",

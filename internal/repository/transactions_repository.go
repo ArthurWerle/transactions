@@ -29,8 +29,8 @@ type TransactionsRepository interface {
 	FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
 	FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error)
 	PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error
-	FindEarliestDate() (*time.Time, error)
-	FindExpenseSummaryByCategory() ([]CategoryExpenseSummary, error)
+	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
+	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
 }
 
 type transactionsRepository struct {
@@ -187,20 +187,30 @@ func (r *transactionsRepository) PrepayTransaction(original *model.Transaction, 
 	})
 }
 
-func (r *transactionsRepository) FindEarliestDate() (*time.Time, error) {
+func (r *transactionsRepository) FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error) {
 	var result struct {
 		MinDate *time.Time `gorm:"column:min_date"`
 	}
-	err := r.db.Raw("SELECT MIN(date) as min_date FROM transactions WHERE date IS NOT NULL AND deleted_at IS NULL").Scan(&result).Error
+	query := "SELECT MIN(date) as min_date FROM transactions WHERE date IS NOT NULL AND deleted_at IS NULL"
+	args := []interface{}{}
+	if startDate != nil {
+		query += " AND date >= ?"
+		args = append(args, *startDate)
+	}
+	if endDate != nil {
+		query += " AND date <= ?"
+		args = append(args, *endDate)
+	}
+	err := r.db.Raw(query, args...).Scan(&result).Error
 	if err != nil {
 		return nil, err
 	}
 	return result.MinDate, nil
 }
 
-func (r *transactionsRepository) FindExpenseSummaryByCategory() ([]CategoryExpenseSummary, error) {
+func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error) {
 	var results []CategoryExpenseSummary
-	err := r.db.Raw(`
+	query := `
 		SELECT
 			t.category_id,
 			c.name as category_name,
@@ -210,8 +220,17 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory() ([]CategoryExpen
 		WHERE t.type = 'expense'
 			AND t.category_id IS NOT NULL
 			AND t.date IS NOT NULL
-			AND t.deleted_at IS NULL
-		GROUP BY t.category_id, c.name
-	`).Scan(&results).Error
+			AND t.deleted_at IS NULL`
+	args := []interface{}{}
+	if startDate != nil {
+		query += " AND t.date >= ?"
+		args = append(args, *startDate)
+	}
+	if endDate != nil {
+		query += " AND t.date <= ?"
+		args = append(args, *endDate)
+	}
+	query += " GROUP BY t.category_id, c.name"
+	err := r.db.Raw(query, args...).Scan(&results).Error
 	return results, err
 }

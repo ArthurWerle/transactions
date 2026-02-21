@@ -21,7 +21,7 @@ type PrepayResult struct {
 type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
 	GetAverageByType(ctx context.Context) ([]AverageType, error)
-	GetAverageByCategory(ctx context.Context) ([]AverageByCategory, error)
+	GetAverageByCategory(ctx context.Context, startDate, endDate *time.Time) ([]AverageByCategory, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error)
@@ -140,28 +140,36 @@ func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageTy
 	return result, nil
 }
 
-func (s *transactionsService) GetAverageByCategory(ctx context.Context) ([]AverageByCategory, error) {
-	earliestDate, err := s.transactionRepo.FindEarliestDate()
+func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDate, endDate *time.Time) ([]AverageByCategory, error) {
+	earliestDate, err := s.transactionRepo.FindEarliestDate(startDate, endDate)
 	if err != nil {
 		log.Printf("[TransactionsService.GetAverageByCategory] ERROR: Failed to fetch earliest date: %v", err)
 		return nil, fmt.Errorf("failed to fetch earliest transaction date: %w", err)
 	}
 
-	var startDate time.Time
-	if earliestDate != nil {
-		startDate = time.Date(earliestDate.Year(), earliestDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var rangeStart time.Time
+	if startDate != nil {
+		rangeStart = time.Date(startDate.Year(), startDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+	} else if earliestDate != nil {
+		rangeStart = time.Date(earliestDate.Year(), earliestDate.Month(), 1, 0, 0, 0, 0, time.UTC)
 	} else {
-		startDate = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		rangeStart = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
-	now := time.Now()
-	currentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	totalMonths := monthsBetween(startDate, currentMonth) + 1
+	var rangeEnd time.Time
+	if endDate != nil {
+		rangeEnd = time.Date(endDate.Year(), endDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		now := time.Now()
+		rangeEnd = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	}
+
+	totalMonths := monthsBetween(rangeStart, rangeEnd) + 1
 	if totalMonths < 1 {
 		totalMonths = 1
 	}
 
-	summaries, err := s.transactionRepo.FindExpenseSummaryByCategory()
+	summaries, err := s.transactionRepo.FindExpenseSummaryByCategory(startDate, endDate)
 	if err != nil {
 		log.Printf("[TransactionsService.GetAverageByCategory] ERROR: Failed to fetch summaries: %v", err)
 		return nil, fmt.Errorf("failed to fetch expense summaries by category: %w", err)
