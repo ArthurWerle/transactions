@@ -253,11 +253,35 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		searchQuery = queryStr
 	}
 
+	var startDate, endDate *time.Time
+	if s := c.Query("start_date"); s != "" {
+		parsed, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid start_date format",
+				"details": "start_date must be in YYYY-MM-DD format",
+			})
+			return
+		}
+		startDate = &parsed
+	}
+	if s := c.Query("end_date"); s != "" {
+		parsed, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid end_date format",
+				"details": "end_date must be in YYYY-MM-DD format",
+			})
+			return
+		}
+		endDate = &parsed
+	}
+
 	var transactions []model.Transaction
 	var err error
 
-	if currentMonth || len(categoryIDs) > 0 || searchQuery != "" {
-		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery)
+	if currentMonth || len(categoryIDs) > 0 || searchQuery != "" || startDate != nil || endDate != nil {
+		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate)
 	} else {
 		transactions, err = h.transactionService.GetTransactions(c.Request.Context())
 	}
@@ -270,9 +294,15 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		return
 	}
 
+	var sum float64
+	for _, t := range transactions {
+		sum += t.Amount
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"sum":          sum,
 	})
 }
 

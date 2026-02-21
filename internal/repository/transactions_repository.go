@@ -18,7 +18,7 @@ type TransactionsRepository interface {
 	FindByID(id uint) (*model.Transaction, error)
 	FindByPrepaidID(prepaidID uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
-	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error)
+	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error)
 	FindBiggest() ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
@@ -79,7 +79,7 @@ func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error) {
+func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid)
 
@@ -88,6 +88,20 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
 		query = query.Where("(date >= ? AND date <= ?) OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))", startOfMonth, endOfMonth, endOfMonth, startOfMonth)
+	} else if startDate != nil || endDate != nil {
+		sd := time.Time{}
+		if startDate != nil {
+			sd = *startDate
+		}
+		ed := time.Now()
+		if endDate != nil {
+			ed = *endDate
+		}
+		query = query.Where(
+			"(is_recurring = ? AND date >= ? AND date <= ?) OR (is_recurring = ? AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))",
+			false, sd, ed,
+			true, ed, sd,
+		)
 	}
 
 	if len(categoryIDs) > 0 {
