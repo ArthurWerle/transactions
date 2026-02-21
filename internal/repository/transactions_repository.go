@@ -18,7 +18,7 @@ type TransactionsRepository interface {
 	FindByID(id uint) (*model.Transaction, error)
 	FindByPrepaidID(prepaidID uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
-	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error)
+	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error)
 	FindBiggest() ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
@@ -79,7 +79,7 @@ func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error) {
+func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid)
 
@@ -110,6 +110,10 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 
 	if searchQuery != "" {
 		query = query.Where("description ILIKE ?", "%"+searchQuery+"%")
+	}
+
+	if transactionType != "" {
+		query = query.Where("type = ?", transactionType)
 	}
 
 	err := query.Order("is_recurring, date DESC").Find(&transactions).Error

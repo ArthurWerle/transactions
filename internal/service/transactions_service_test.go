@@ -41,7 +41,7 @@ func (m *mockTransactionsRepository) FindAll() ([]model.Transaction, error) {
 	return nil, nil
 }
 
-func (m *mockTransactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error) {
+func (m *mockTransactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error) {
 	return nil, nil
 }
 

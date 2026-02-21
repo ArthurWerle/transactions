@@ -29,7 +29,7 @@ type TransactionsService interface {
 	GetAverageByCategory(ctx context.Context, startDate, endDate *time.Time) ([]AverageByCategory, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
-	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error)
+	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error)
 	GetLatestTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetBiggestTransactions(ctx context.Context) ([]model.Transaction, error)
 	UpdateTransaction(ctx context.Context, transaction *model.Transaction) error
@@ -73,8 +73,8 @@ func (s *transactionsService) GetBiggestTransactions(ctx context.Context) ([]mod
 	return s.transactionRepo.FindBiggest()
 }
 
-func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time) ([]model.Transaction, error) {
-	return s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate)
+func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error) {
+	return s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
 }
 
 func (s *transactionsService) UpdateTransaction(ctx context.Context, transaction *model.Transaction) error {

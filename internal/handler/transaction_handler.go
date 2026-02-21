@@ -253,6 +253,18 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		searchQuery = queryStr
 	}
 
+	var transactionType string
+	if t := c.Query("type"); t != "" {
+		if t != "income" && t != "expense" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid type value",
+				"details": "type must be 'income' or 'expense'",
+			})
+			return
+		}
+		transactionType = t
+	}
+
 	var startDate, endDate *time.Time
 	if s := c.Query("start_date"); s != "" {
 		parsed, err := time.Parse("2006-01-02", s)
@@ -280,8 +292,8 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 	var transactions []model.Transaction
 	var err error
 
-	if currentMonth || len(categoryIDs) > 0 || searchQuery != "" || startDate != nil || endDate != nil {
-		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate)
+	if currentMonth || len(categoryIDs) > 0 || searchQuery != "" || startDate != nil || endDate != nil || transactionType != "" {
+		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
 	} else {
 		transactions, err = h.transactionService.GetTransactions(c.Request.Context())
 	}
