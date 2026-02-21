@@ -18,6 +18,11 @@ type PrepayResult struct {
 	PrepaidAmount       float64            `json:"prepaid_amount"`
 }
 
+type TransactionPercentages struct {
+	CategoryMonthPercent *float64 `json:"category_month_percent,omitempty"`
+	TotalMonthPercent    *float64 `json:"total_month_percent,omitempty"`
+}
+
 type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
 	GetAverageByType(ctx context.Context) ([]AverageType, error)
@@ -35,6 +40,7 @@ type TransactionsService interface {
 	GetTransactionsByCategory(ctx context.Context, categoryID uint, limit, offset int) ([]model.Transaction, error)
 	GetTransactionsByCategories(ctx context.Context, categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
 	PrepayTransaction(ctx context.Context, id uint) (*PrepayResult, error)
+	GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error)
 }
 
 type transactionsService struct {
@@ -297,4 +303,31 @@ func monthsBetween(start, end time.Time) int {
 	months := int(end.Month()) - int(start.Month())
 	total := years*12 + months
 	return total
+}
+
+func (s *transactionsService) GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error) {
+	monthTotal, err := s.transactionRepo.FindCurrentMonthTotalByType(tx.Type)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch current month total: %w", err)
+	}
+
+	percentages := &TransactionPercentages{}
+
+	if monthTotal > 0 {
+		pct := tx.Amount / monthTotal * 100
+		percentages.TotalMonthPercent = &pct
+	}
+
+	if tx.CategoryID != nil {
+		categoryTotal, err := s.transactionRepo.FindCurrentMonthTotalByTypeAndCategory(tx.Type, *tx.CategoryID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch current month category total: %w", err)
+		}
+		if categoryTotal > 0 {
+			pct := tx.Amount / categoryTotal * 100
+			percentages.CategoryMonthPercent = &pct
+		}
+	}
+
+	return percentages, nil
 }

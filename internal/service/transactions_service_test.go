@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/model"
+	"github.com/ArthurWerle/transactions/internal/repository"
 )
 
 type mockTransactionsRepository struct {
@@ -40,7 +41,7 @@ func (m *mockTransactionsRepository) FindAll() ([]model.Transaction, error) {
 	return nil, nil
 }
 
-func (m *mockTransactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint) ([]model.Transaction, error) {
+func (m *mockTransactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string) ([]model.Transaction, error) {
 	return nil, nil
 }
 
@@ -89,6 +90,26 @@ func (m *mockTransactionsRepository) PrepayTransaction(original *model.Transacti
 	prepayment.ID = uint(len(m.transactions) + 1)
 	m.transactions[prepayment.ID] = prepayment
 	return nil
+}
+
+func (m *mockTransactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {
+	return nil, nil
+}
+
+func (m *mockTransactionsRepository) FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error) {
+	return nil, nil
+}
+
+func (m *mockTransactionsRepository) FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]repository.CategoryExpenseSummary, error) {
+	return nil, nil
+}
+
+func (m *mockTransactionsRepository) FindCurrentMonthTotalByType(transactionType string) (float64, error) {
+	return 0, nil
+}
+
+func (m *mockTransactionsRepository) FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error) {
+	return 0, nil
 }
 
 func TestPrepayTransaction_Success(t *testing.T) {

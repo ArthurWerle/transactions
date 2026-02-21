@@ -129,8 +129,10 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 
 type TransactionDetailResponse struct {
 	*model.Transaction
-	TotalPaid *float64 `json:"total_paid,omitempty"`
-	TotalLeft *float64 `json:"total_left,omitempty"`
+	TotalPaid            *float64 `json:"total_paid,omitempty"`
+	TotalLeft            *float64 `json:"total_left,omitempty"`
+	CategoryMonthPercent *float64 `json:"category_month_percent,omitempty"`
+	TotalMonthPercent    *float64 `json:"total_month_percent,omitempty"`
 }
 
 func computeTotalPaid(tx *model.Transaction) *float64 {
@@ -202,11 +204,26 @@ func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, TransactionDetailResponse{
+	percentages, err := h.transactionService.GetTransactionMonthlyPercentages(c.Request.Context(), transaction)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to compute transaction percentages",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	resp := TransactionDetailResponse{
 		Transaction: transaction,
 		TotalPaid:   computeTotalPaid(transaction),
 		TotalLeft:   computeTotalLeft(transaction),
-	})
+	}
+	if percentages != nil {
+		resp.CategoryMonthPercent = percentages.CategoryMonthPercent
+		resp.TotalMonthPercent = percentages.TotalMonthPercent
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *TransactionHandler) GetTransactions(c *gin.Context) {

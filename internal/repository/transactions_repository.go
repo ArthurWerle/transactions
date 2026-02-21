@@ -31,6 +31,8 @@ type TransactionsRepository interface {
 	PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error
 	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
 	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
+	FindCurrentMonthTotalByType(transactionType string) (float64, error)
+	FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error)
 }
 
 type transactionsRepository struct {
@@ -233,4 +235,51 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate
 	query += " GROUP BY t.category_id, c.name"
 	err := r.db.Raw(query, args...).Scan(&results).Error
 	return results, err
+}
+
+func (r *transactionsRepository) FindCurrentMonthTotalByType(transactionType string) (float64, error) {
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
+
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.Raw(`
+		SELECT COALESCE(SUM(amount), 0) as total
+		FROM transactions
+		WHERE type = ?
+		  AND deleted_at IS NULL
+		  AND (
+		    (is_recurring = false AND date >= ? AND date <= ?)
+		    OR
+		    (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))
+		  )
+	`, transactionType, startOfMonth, endOfMonth, endOfMonth, startOfMonth).Scan(&result).Error
+
+	return result.Total, err
+}
+
+func (r *transactionsRepository) FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error) {
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
+
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.Raw(`
+		SELECT COALESCE(SUM(amount), 0) as total
+		FROM transactions
+		WHERE type = ?
+		  AND category_id = ?
+		  AND deleted_at IS NULL
+		  AND (
+		    (is_recurring = false AND date >= ? AND date <= ?)
+		    OR
+		    (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))
+		  )
+	`, transactionType, categoryID, startOfMonth, endOfMonth, endOfMonth, startOfMonth).Scan(&result).Error
+
+	return result.Total, err
 }
