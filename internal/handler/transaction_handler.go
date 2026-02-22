@@ -527,11 +527,18 @@ func (h *TransactionHandler) EndRecurringTransaction(c *gin.Context) {
 		return
 	}
 
-	parsedEndDate, err := time.Parse("2006-01-02", req.EndDate)
-	if err != nil {
+	var parsedEndDate time.Time
+	var parseErr error
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		parsedEndDate, parseErr = time.Parse(layout, req.EndDate)
+		if parseErr == nil {
+			break
+		}
+	}
+	if parseErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid end_date format",
-			"details": "End date must be in YYYY-MM-DD format (e.g., 2026-03-01)",
+			"details": "End date must be a valid date string (e.g., 2026-03-01 or 2026-03-01T00:00:00.000Z)",
 		})
 		return
 	}
