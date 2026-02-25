@@ -181,17 +181,71 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 		return nil, fmt.Errorf("failed to fetch expense summaries by category: %w", err)
 	}
 
-	var result []AverageByCategory
+	type categoryInfo struct {
+		name  string
+		total float64
+	}
+	categoryMap := make(map[uint]*categoryInfo)
 	for _, summary := range summaries {
 		catID := uint(0)
 		if summary.CategoryID != nil {
 			catID = *summary.CategoryID
 		}
+		categoryMap[catID] = &categoryInfo{
+			name:  summary.CategoryName,
+			total: summary.TotalSpent,
+		}
+	}
+
+	recurringExpenses, err := s.transactionRepo.FindRecurringExpensesInRange(startDate, endDate)
+	if err != nil {
+		log.Printf("[TransactionsService.GetAverageByCategory] ERROR: Failed to fetch recurring expenses: %v", err)
+		return nil, fmt.Errorf("failed to fetch recurring expense summaries by category: %w", err)
+	}
+
+	for _, tx := range recurringExpenses {
+		if tx.CategoryID == nil || tx.StartDate == nil {
+			continue
+		}
+
+		txStart := time.Date(tx.StartDate.Year(), tx.StartDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+		activeStart := rangeStart
+		if txStart.After(activeStart) {
+			activeStart = txStart
+		}
+
+		activeEnd := rangeEnd
+		if tx.EndDate != nil {
+			txEnd := time.Date(tx.EndDate.Year(), tx.EndDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+			if txEnd.Before(activeEnd) {
+				activeEnd = txEnd
+			}
+		}
+
+		months := monthsBetween(activeStart, activeEnd)
+		if months < 1 {
+			continue
+		}
+
+		catID := *tx.CategoryID
+		contribution := tx.Amount * float64(months)
+		if info, exists := categoryMap[catID]; exists {
+			info.total += contribution
+		} else {
+			categoryMap[catID] = &categoryInfo{
+				name:  tx.CategoryName,
+				total: contribution,
+			}
+		}
+	}
+
+	var result []AverageByCategory
+	for catID, info := range categoryMap {
 		result = append(result, AverageByCategory{
 			CategoryID:   catID,
-			CategoryName: summary.CategoryName,
-			Average:      summary.TotalSpent / float64(totalMonths),
-			TotalSpent:   summary.TotalSpent,
+			CategoryName: info.name,
+			Average:      info.total / float64(totalMonths),
+			TotalSpent:   info.total,
 		})
 	}
 

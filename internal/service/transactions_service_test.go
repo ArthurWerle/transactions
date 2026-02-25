@@ -11,8 +11,11 @@ import (
 )
 
 type mockTransactionsRepository struct {
-	transactions map[uint]*model.Transaction
-	prepayErr    error
+	transactions       map[uint]*model.Transaction
+	prepayErr          error
+	nonRecurringSums   []repository.CategoryExpenseSummary
+	recurringExpenses  []repository.RecurringCategoryExpense
+	earliestDate       *time.Time
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -97,11 +100,15 @@ func (m *mockTransactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Tra
 }
 
 func (m *mockTransactionsRepository) FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error) {
-	return nil, nil
+	return m.earliestDate, nil
 }
 
 func (m *mockTransactionsRepository) FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]repository.CategoryExpenseSummary, error) {
-	return nil, nil
+	return m.nonRecurringSums, nil
+}
+
+func (m *mockTransactionsRepository) FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]repository.RecurringCategoryExpense, error) {
+	return m.recurringExpenses, nil
 }
 
 func (m *mockTransactionsRepository) FindCurrentMonthTotalByType(transactionType string) (float64, error) {
@@ -306,6 +313,115 @@ func TestPrepayTransaction_DescriptionFormat(t *testing.T) {
 	expectedDescPrefix := "Adiantamento de"
 	if len(*result.PrepayTransaction.Description) < len(expectedDescPrefix) {
 		t.Errorf("description should start with '%s'", expectedDescPrefix)
+	}
+}
+
+func TestGetAverageByCategory_IncludesRecurring(t *testing.T) {
+	repo := newMockRepository()
+	svc := NewTransactionsService(repo)
+
+	catID := uint(5)
+	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) // 6 months
+
+	recurringStart := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// Two recurring transactions of R$500 each in "Eletrodomestics"
+	repo.recurringExpenses = []repository.RecurringCategoryExpense{
+		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: nil},
+		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: nil},
+	}
+
+	result, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 category, got %d", len(result))
+	}
+
+	entry := result[0]
+	if entry.CategoryID != catID {
+		t.Errorf("expected category ID %d, got %d", catID, entry.CategoryID)
+	}
+
+	// 2 transactions × R$500 × 6 months = R$6,000 total
+	expectedTotal := 6000.0
+	if entry.TotalSpent != expectedTotal {
+		t.Errorf("expected TotalSpent %.2f, got %.2f", expectedTotal, entry.TotalSpent)
+	}
+
+	// R$6,000 / 6 months = R$1,000 average
+	expectedAverage := 1000.0
+	if entry.Average != expectedAverage {
+		t.Errorf("expected Average %.2f, got %.2f", expectedAverage, entry.Average)
+	}
+}
+
+func TestGetAverageByCategory_MixesRecurringAndNonRecurring(t *testing.T) {
+	repo := newMockRepository()
+	svc := NewTransactionsService(repo)
+
+	catID := uint(5)
+	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) // 6 months
+
+	recurringStart := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+
+	// Non-recurring: R$300 one-off in this category
+	repo.nonRecurringSums = []repository.CategoryExpenseSummary{
+		{CategoryID: &catID, CategoryName: "Eletrodomestics", TotalSpent: 300.0},
+	}
+	// Recurring: R$500/month for 6 months = R$3,000
+	repo.recurringExpenses = []repository.RecurringCategoryExpense{
+		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: nil},
+	}
+
+	result, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 category, got %d", len(result))
+	}
+
+	// R$300 + R$3,000 = R$3,300 total; average = R$3,300 / 6 = R$550
+	expectedTotal := 3300.0
+	if result[0].TotalSpent != expectedTotal {
+		t.Errorf("expected TotalSpent %.2f, got %.2f", expectedTotal, result[0].TotalSpent)
+	}
+
+	expectedAverage := 550.0
+	if result[0].Average != expectedAverage {
+		t.Errorf("expected Average %.2f, got %.2f", expectedAverage, result[0].Average)
+	}
+}
+
+func TestGetAverageByCategory_RecurringEndedBeforeRange(t *testing.T) {
+	repo := newMockRepository()
+	svc := NewTransactionsService(repo)
+
+	catID := uint(5)
+	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+
+	recurringStart := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	recurringEnd := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC) // ended before range
+
+	repo.recurringExpenses = []repository.RecurringCategoryExpense{
+		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: &recurringEnd},
+	}
+
+	result, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Transaction ended before range, should contribute nothing
+	if len(result) != 0 {
+		t.Errorf("expected 0 categories, got %d (transaction ended before range)", len(result))
 	}
 }
 
