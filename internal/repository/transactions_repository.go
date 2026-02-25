@@ -13,6 +13,14 @@ type CategoryExpenseSummary struct {
 	TotalSpent   float64 `gorm:"column:total_spent"`
 }
 
+type RecurringCategoryExpense struct {
+	CategoryID   *uint      `gorm:"column:category_id"`
+	CategoryName string     `gorm:"column:category_name"`
+	Amount       float64    `gorm:"column:amount"`
+	StartDate    *time.Time `gorm:"column:start_date"`
+	EndDate      *time.Time `gorm:"column:end_date"`
+}
+
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
@@ -31,6 +39,7 @@ type TransactionsRepository interface {
 	PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error
 	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
 	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
+	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
 	FindCurrentMonthTotalByType(transactionType string) (float64, error)
 	FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error)
 }
@@ -251,6 +260,35 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate
 		args = append(args, *endDate)
 	}
 	query += " GROUP BY t.category_id, c.name"
+	err := r.db.Raw(query, args...).Scan(&results).Error
+	return results, err
+}
+
+func (r *transactionsRepository) FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error) {
+	var results []RecurringCategoryExpense
+	query := `
+		SELECT
+			t.category_id,
+			c.name as category_name,
+			t.amount,
+			t.start_date,
+			t.end_date
+		FROM transactions t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.type = 'expense'
+			AND t.category_id IS NOT NULL
+			AND t.is_recurring = true
+			AND t.start_date IS NOT NULL
+			AND t.deleted_at IS NULL`
+	args := []interface{}{}
+	if endDate != nil {
+		query += " AND t.start_date <= ?"
+		args = append(args, *endDate)
+	}
+	if startDate != nil {
+		query += " AND (t.end_date IS NULL OR t.end_date >= ?)"
+		args = append(args, *startDate)
+	}
 	err := r.db.Raw(query, args...).Scan(&results).Error
 	return results, err
 }
