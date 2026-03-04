@@ -339,11 +339,29 @@ func (h *TransactionHandler) GetLatestTransactions(c *gin.Context) {
 }
 
 func (h *TransactionHandler) GetBiggestTransactions(c *gin.Context) {
-	var transactions []model.Transaction
-	var err error
+	now := time.Now()
+	month := int(now.Month())
+	year := now.Year()
 
-	transactions, err = h.transactionService.GetBiggestTransactions(c.Request.Context())
+	if monthStr := c.Query("month"); monthStr != "" {
+		m, err := strconv.Atoi(monthStr)
+		if err != nil || m < 1 || m > 12 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid month: must be between 1 and 12"})
+			return
+		}
+		month = m
+	}
 
+	if yearStr := c.Query("year"); yearStr != "" {
+		y, err := strconv.Atoi(yearStr)
+		if err != nil || y < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid year"})
+			return
+		}
+		year = y
+	}
+
+	transactions, err := h.transactionService.GetBiggestTransactions(c.Request.Context(), month, year)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to fetch biggest transactions",
@@ -352,9 +370,15 @@ func (h *TransactionHandler) GetBiggestTransactions(c *gin.Context) {
 		return
 	}
 
+	var sum float64
+	for _, t := range transactions {
+		sum += t.Amount
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"sum":          sum,
 	})
 }
 
