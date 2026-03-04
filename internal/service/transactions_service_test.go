@@ -48,7 +48,7 @@ func (m *mockTransactionsRepository) FindAllWithFilters(currentMonth bool, categ
 	return nil, nil
 }
 
-func (m *mockTransactionsRepository) FindBiggest() ([]model.Transaction, error) {
+func (m *mockTransactionsRepository) FindBiggest(month, year int) ([]model.Transaction, error) {
 	return nil, nil
 }
 

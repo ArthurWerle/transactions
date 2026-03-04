@@ -27,7 +27,7 @@ type TransactionsRepository interface {
 	FindByPrepaidID(prepaidID uint) (*model.Transaction, error)
 	FindAll() ([]model.Transaction, error)
 	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error)
-	FindBiggest() ([]model.Transaction, error)
+	FindBiggest(month, year int) ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
 	Delete(id uint) error
@@ -135,9 +135,14 @@ func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindBiggest() ([]model.Transaction, error) {
+func (r *transactionsRepository) FindBiggest(month, year int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Where("type = ? AND (date_trunc('month', CURRENT_DATE) = date_trunc('month', date) OR (is_recurring = true AND start_date <= date_trunc('month', CURRENT_DATE) + interval '1 month' - interval '1 second' AND (end_date >= date_trunc('month', CURRENT_DATE) OR end_date IS NULL)))", model.Expense).Order("amount DESC").Limit(3).Find(&transactions).Error
+	startOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
+	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Where(
+		"type = ? AND ((is_recurring = false AND date >= ? AND date <= ?) OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL)))",
+		model.Expense, startOfMonth, endOfMonth, endOfMonth, startOfMonth,
+	).Order("amount DESC").Limit(3).Find(&transactions).Error
 	return transactions, err
 }
 

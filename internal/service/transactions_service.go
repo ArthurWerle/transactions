@@ -31,7 +31,7 @@ type TransactionsService interface {
 	GetTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error)
 	GetLatestTransactions(ctx context.Context) ([]model.Transaction, error)
-	GetBiggestTransactions(ctx context.Context) ([]model.Transaction, error)
+	GetBiggestTransactions(ctx context.Context, month, year int) ([]model.Transaction, error)
 	UpdateTransaction(ctx context.Context, transaction *model.Transaction) error
 	DeleteTransaction(ctx context.Context, id uint) error
 	GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error)
@@ -69,8 +69,8 @@ func (s *transactionsService) GetLatestTransactions(ctx context.Context) ([]mode
 	return s.transactionRepo.FindLatest()
 }
 
-func (s *transactionsService) GetBiggestTransactions(ctx context.Context) ([]model.Transaction, error) {
-	return s.transactionRepo.FindBiggest()
+func (s *transactionsService) GetBiggestTransactions(ctx context.Context, month, year int) ([]model.Transaction, error) {
+	return s.transactionRepo.FindBiggest(month, year)
 }
 
 func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error) {
