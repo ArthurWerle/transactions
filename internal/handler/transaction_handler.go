@@ -289,13 +289,35 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		endDate = &parsed
 	}
 
+	limit := 50
+	offset := 0
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || limit <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid limit parameter",
+			})
+			return
+		}
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err != nil || offset < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Invalid offset parameter",
+			})
+			return
+		}
+	}
+
 	var transactions []model.Transaction
+	var total int64
 	var err error
 
 	if currentMonth || len(categoryIDs) > 0 || searchQuery != "" || startDate != nil || endDate != nil || transactionType != "" {
-		transactions, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
+		transactions, total, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType, limit, offset)
 	} else {
-		transactions, err = h.transactionService.GetTransactions(c.Request.Context())
+		transactions, total, err = h.transactionService.GetTransactions(c.Request.Context(), limit, offset)
 	}
 
 	if err != nil {
@@ -314,6 +336,9 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
+		"total":        total,
+		"limit":        limit,
+		"offset":       offset,
 		"sum":          sum,
 	})
 }

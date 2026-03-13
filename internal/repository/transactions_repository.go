@@ -25,8 +25,10 @@ type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
 	FindByPrepaidID(prepaidID uint) (*model.Transaction, error)
-	FindAll() ([]model.Transaction, error)
-	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error)
+	FindAll(limit, offset int) ([]model.Transaction, error)
+	CountAll() (int64, error)
+	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, error)
+	CountAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (int64, error)
 	FindBiggest(month, year int) ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
@@ -82,15 +84,20 @@ func (r *transactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transac
 	return &transaction, nil
 }
 
-func (r *transactionsRepository) FindAll() ([]model.Transaction, error) {
+func (r *transactionsRepository) FindAll(limit, offset int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Order("is_recurring, date DESC").Find(&transactions).Error
+	err := r.db.Scopes(WithIsPrepaid).Order("is_recurring, date DESC").Limit(limit).Offset(offset).Find(&transactions).Error
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error) {
-	var transactions []model.Transaction
-	query := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid)
+func (r *transactionsRepository) CountAll() (int64, error) {
+	var count int64
+	err := r.db.Model(&model.Transaction{}).Count(&count).Error
+	return count, err
+}
+
+func (r *transactionsRepository) buildFilterQuery(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) *gorm.DB {
+	query := r.db.Model(&model.Transaction{})
 
 	if currentMonth {
 		now := time.Now()
@@ -125,8 +132,20 @@ func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryI
 		query = query.Where("type = ?", transactionType)
 	}
 
-	err := query.Order("is_recurring, date DESC").Find(&transactions).Error
+	return query
+}
+
+func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, error) {
+	var transactions []model.Transaction
+	query := r.buildFilterQuery(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType).Scopes(WithIsPrepaid)
+	err := query.Order("is_recurring, date DESC").Limit(limit).Offset(offset).Find(&transactions).Error
 	return transactions, err
+}
+
+func (r *transactionsRepository) CountAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (int64, error) {
+	var count int64
+	err := r.buildFilterQuery(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType).Count(&count).Error
+	return count, err
 }
 
 func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
