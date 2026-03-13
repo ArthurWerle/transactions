@@ -28,8 +28,8 @@ type TransactionsService interface {
 	GetAverageByType(ctx context.Context) ([]AverageType, error)
 	GetAverageByCategory(ctx context.Context, startDate, endDate *time.Time) ([]AverageByCategory, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
-	GetTransactions(ctx context.Context) ([]model.Transaction, error)
-	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error)
+	GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, error)
+	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, error)
 	GetLatestTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetBiggestTransactions(ctx context.Context, month, year int) ([]model.Transaction, error)
 	UpdateTransaction(ctx context.Context, transaction *model.Transaction) error
@@ -61,8 +61,13 @@ func (s *transactionsService) GetTransactionByID(ctx context.Context, id uint) (
 	return s.transactionRepo.FindByID(id)
 }
 
-func (s *transactionsService) GetTransactions(ctx context.Context) ([]model.Transaction, error) {
-	return s.transactionRepo.FindAll()
+func (s *transactionsService) GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, error) {
+	total, err := s.transactionRepo.CountAll()
+	if err != nil {
+		return nil, 0, err
+	}
+	transactions, err := s.transactionRepo.FindAll(limit, offset)
+	return transactions, total, err
 }
 
 func (s *transactionsService) GetLatestTransactions(ctx context.Context) ([]model.Transaction, error) {
@@ -73,8 +78,13 @@ func (s *transactionsService) GetBiggestTransactions(ctx context.Context, month,
 	return s.transactionRepo.FindBiggest(month, year)
 }
 
-func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) ([]model.Transaction, error) {
-	return s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
+func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, error) {
+	total, err := s.transactionRepo.CountAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
+	if err != nil {
+		return nil, 0, err
+	}
+	transactions, err := s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType, limit, offset)
+	return transactions, total, err
 }
 
 func (s *transactionsService) UpdateTransaction(ctx context.Context, transaction *model.Transaction) error {
@@ -98,7 +108,7 @@ type AverageByCategory struct {
 }
 
 func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageType, error) {
-	transactions, err := s.transactionRepo.FindAll()
+	transactions, err := s.transactionRepo.FindAll(-1, 0)
 	if err != nil {
 		log.Printf("[TypeService.GetAverageByType] ERROR: Failed to fetch transactions: %v", err)
 		return nil, fmt.Errorf("failed to fetch transactions: %w", err)
