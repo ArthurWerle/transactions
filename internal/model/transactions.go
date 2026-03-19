@@ -12,6 +12,7 @@ type Transaction struct {
 	CreatedById   uint           `gorm:"column:created_by_id" json:"created_by_id"`
 	IsRecurring   bool           `gorm:"not null;default:false" json:"is_recurring"`
 	CategoryID    *uint          `gorm:"column:category_id" json:"category_id"`
+	SubcategoryID *uint          `gorm:"column:subcategory_id" json:"subcategory_id"`
 	Amount        float64        `gorm:"type:decimal(12,2);not null" json:"amount"`
 	Type          string         `gorm:"type:transaction_type;not null" json:"type"`
 	Subtype       *string        `gorm:"type:transaction_subtype" json:"subtype"`

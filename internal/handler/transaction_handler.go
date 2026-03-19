@@ -23,9 +23,10 @@ func NewTransactionHandler(transactionService service.TransactionsService) *Tran
 }
 
 type CreateTransactionRequest struct {
-	IsRecurring bool    `json:"is_recurring"`
-	CategoryID  *uint   `json:"category_id,omitempty"`
-	CreatedById uint    `json:"created_by_id"`
+	IsRecurring   bool  `json:"is_recurring"`
+	CategoryID    *uint `json:"category_id,omitempty"`
+	SubcategoryID *uint `json:"subcategory_id,omitempty"`
+	CreatedById   uint  `json:"created_by_id"`
 	Amount      float64 `json:"amount" binding:"required"`
 	Type        string  `json:"type" binding:"required"`
 	Subtype     *string `json:"subtype,omitempty"`
@@ -68,9 +69,10 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 	}
 
 	transaction := &model.Transaction{
-		IsRecurring: req.IsRecurring,
-		CategoryID:  req.CategoryID,
-		CreatedById: req.CreatedById,
+		IsRecurring:   req.IsRecurring,
+		CategoryID:    req.CategoryID,
+		SubcategoryID: req.SubcategoryID,
+		CreatedById:   req.CreatedById,
 		Amount:      req.Amount,
 		Type:        req.Type,
 		Subtype:     req.Subtype,
@@ -408,8 +410,9 @@ func (h *TransactionHandler) GetBiggestTransactions(c *gin.Context) {
 }
 
 type UpdateTransactionRequest struct {
-	IsRecurring *bool    `json:"is_recurring,omitempty"`
-	CategoryID  *uint    `json:"category_id,omitempty"`
+	IsRecurring   *bool `json:"is_recurring,omitempty"`
+	CategoryID    *uint `json:"category_id,omitempty"`
+	SubcategoryID *uint `json:"subcategory_id,omitempty"`
 	Amount      *float64 `json:"amount,omitempty"`
 	Type        *string  `json:"type,omitempty"`
 	Subtype     *string  `json:"subtype,omitempty"`
@@ -455,6 +458,9 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 	}
 	if req.CategoryID != nil {
 		transaction.CategoryID = req.CategoryID
+	}
+	if req.SubcategoryID != nil {
+		transaction.SubcategoryID = req.SubcategoryID
 	}
 	if req.Amount != nil {
 		if *req.Amount <= 0 {
