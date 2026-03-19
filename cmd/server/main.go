@@ -47,6 +47,7 @@ func main() {
 	if err := db.AutoMigrate(
 		&model.Transaction{},
 		&model.Category{},
+		&model.Subcategory{},
 	); err != nil {
 		logger.Error("failed to auto migrate", "error", err)
 		os.Exit(1)
@@ -60,7 +61,11 @@ func main() {
 	categoryService := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 
-	router := setupRouter(cfg, logger, transactionHandler, categoryHandler)
+	subcategoryRepo := repository.NewSubcategoryRepository(db)
+	subcategoryService := service.NewSubcategoryService(subcategoryRepo)
+	subcategoryHandler := handler.NewSubcategoryHandler(subcategoryService)
+
+	router := setupRouter(cfg, logger, transactionHandler, categoryHandler, subcategoryHandler)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.Server.Port),
@@ -93,7 +98,7 @@ func main() {
 	logger.Info("server exited")
 }
 
-func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler, categoryHandler *handler.CategoryHandler) *gin.Engine {
+func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler, categoryHandler *handler.CategoryHandler, subcategoryHandler *handler.SubcategoryHandler) *gin.Engine {
 	if cfg.Log.Level != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -143,6 +148,15 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			categories.GET("/:id", categoryHandler.GetCategoryByID)
 			categories.PUT("/:id", categoryHandler.UpdateCategory)
 			categories.DELETE("/:id", categoryHandler.DeleteCategory)
+		}
+
+		subcategories := v1.Group("/subcategories")
+		{
+			subcategories.GET("", subcategoryHandler.GetSubcategories)
+			subcategories.POST("", subcategoryHandler.CreateSubcategory)
+			subcategories.GET("/:id", subcategoryHandler.GetSubcategoryByID)
+			subcategories.PUT("/:id", subcategoryHandler.UpdateSubcategory)
+			subcategories.DELETE("/:id", subcategoryHandler.DeleteSubcategory)
 		}
 	}
 
