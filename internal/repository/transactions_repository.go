@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"log"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/model"
@@ -176,6 +177,7 @@ func (r *transactionsRepository) Delete(id uint) error {
 func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	endOfDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day()+1, 0, 0, 0, 0, endDate.Location())
+	log.Printf("FindByDateRange: startDate=%s endDate=%s endOfDay=%s", startDate.Format(time.RFC3339), endDate.Format(time.RFC3339), endOfDay.Format(time.RFC3339))
 	err := r.db.Scopes(WithIsPrepaid).Where(
 		"(is_recurring = ? AND date >= ? AND date < ?) OR (is_recurring = ? AND start_date < ? AND (end_date >= ? OR end_date IS NULL))",
 		false, startDate, endOfDay,
