@@ -175,10 +175,11 @@ func (r *transactionsRepository) Delete(id uint) error {
 
 func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error) {
 	var transactions []model.Transaction
+	endOfDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day()+1, 0, 0, 0, 0, endDate.Location())
 	err := r.db.Scopes(WithIsPrepaid).Where(
-		"(is_recurring = ? AND date >= ? AND date <= ?) OR (is_recurring = ? AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))",
-		false, startDate, endDate,
-		true, endDate, startDate,
+		"(is_recurring = ? AND date >= ? AND date < ?) OR (is_recurring = ? AND start_date < ? AND (end_date >= ? OR end_date IS NULL))",
+		false, startDate, endOfDay,
+		true, endOfDay, startDate,
 	).
 		Order("date DESC").
 		Find(&transactions).Error
