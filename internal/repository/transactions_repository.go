@@ -69,7 +69,7 @@ func (r *transactionsRepository) Create(transaction *model.Transaction) error {
 
 func (r *transactionsRepository) FindByID(id uint) (*model.Transaction, error) {
 	var transaction model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).First(&transaction, id).Error
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").First(&transaction, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (r *transactionsRepository) FindByID(id uint) (*model.Transaction, error) {
 
 func (r *transactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {
 	var transaction model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Where("prepaid_from_id = ?", prepaidID).First(&transaction).Error
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Where("prepaid_from_id = ?", prepaidID).First(&transaction).Error
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func (r *transactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transac
 
 func (r *transactionsRepository) FindAll(limit, offset int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Order("is_recurring, date DESC").Limit(limit).Offset(offset).Find(&transactions).Error
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Order("is_recurring, date DESC").Limit(limit).Offset(offset).Find(&transactions).Error
 	return transactions, err
 }
 
@@ -139,7 +139,7 @@ func (r *transactionsRepository) buildFilterQuery(currentMonth bool, categoryIDs
 func (r *transactionsRepository) FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	query := r.buildFilterQuery(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType).Scopes(WithIsPrepaid)
-	err := query.Order("is_recurring, date DESC").Limit(limit).Offset(offset).Find(&transactions).Error
+	err := query.Preload("Subcategory").Order("is_recurring, date DESC").Limit(limit).Offset(offset).Find(&transactions).Error
 	return transactions, err
 }
 
@@ -151,7 +151,7 @@ func (r *transactionsRepository) CountAllWithFilters(currentMonth bool, category
 
 func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Where("date IS NOT NULL AND type = ?", model.Expense).Order("date DESC").Limit(3).Find(&transactions).Error
+	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Preload("Subcategory").Where("date IS NOT NULL AND type = ?", model.Expense).Order("date DESC").Limit(3).Find(&transactions).Error
 	return transactions, err
 }
 
@@ -159,7 +159,7 @@ func (r *transactionsRepository) FindBiggest(month, year int) ([]model.Transacti
 	var transactions []model.Transaction
 	startOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
-	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Where(
+	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Preload("Subcategory").Where(
 		"type = ? AND ((is_recurring = false AND date >= ? AND date <= ?) OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL)))",
 		model.Expense, startOfMonth, endOfMonth, endOfMonth, startOfMonth,
 	).Order("amount DESC").Limit(3).Find(&transactions).Error
@@ -178,7 +178,7 @@ func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) (
 	var transactions []model.Transaction
 	endOfDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day()+1, 0, 0, 0, 0, endDate.Location())
 	log.Printf("FindByDateRange: startDate=%s endDate=%s endOfDay=%s", startDate.Format(time.RFC3339), endDate.Format(time.RFC3339), endOfDay.Format(time.RFC3339))
-	err := r.db.Scopes(WithIsPrepaid).Where(
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Where(
 		"(is_recurring = ? AND date >= ? AND date < ?) OR (is_recurring = ? AND start_date < ? AND (end_date >= ? OR end_date IS NULL))",
 		false, startDate, endOfDay,
 		true, endOfDay, startDate,
@@ -190,7 +190,7 @@ func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) (
 
 func (r *transactionsRepository) FindByType(transactionType string, limit, offset int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Where("type = ?", transactionType).
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Where("type = ?", transactionType).
 		Limit(limit).
 		Offset(offset).
 		Order("date DESC").
@@ -200,7 +200,7 @@ func (r *transactionsRepository) FindByType(transactionType string, limit, offse
 
 func (r *transactionsRepository) FindRecurring() ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Where("is_recurring = ?", true).
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Where("is_recurring = ?", true).
 		Order("start_date DESC").
 		Find(&transactions).Error
 	return transactions, err
@@ -208,7 +208,7 @@ func (r *transactionsRepository) FindRecurring() ([]model.Transaction, error) {
 
 func (r *transactionsRepository) FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Where("category_id = ?", categoryID).
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Where("category_id = ?", categoryID).
 		Limit(limit).
 		Offset(offset).
 		Order("date DESC").
@@ -223,7 +223,7 @@ func (r *transactionsRepository) FindByCategories(categoriesIDs []uint, limit, o
 		return transactions, nil
 	}
 
-	err := r.db.Scopes(WithIsPrepaid).Where("category_id in ?", categoriesIDs).
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Where("category_id in ?", categoriesIDs).
 		Limit(limit).
 		Offset(offset).
 		Order("date DESC").
