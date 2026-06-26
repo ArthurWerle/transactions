@@ -108,48 +108,91 @@ type AverageByCategory struct {
 }
 
 func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageType, error) {
-	transactions, err := s.transactionRepo.FindAll(-1, 0)
+	monthlyTotals, err := s.transactionRepo.FindNonRecurringMonthlyTotalsByType()
 	if err != nil {
-		log.Printf("[TypeService.GetAverageByType] ERROR: Failed to fetch transactions: %v", err)
-		return nil, fmt.Errorf("failed to fetch transactions: %w", err)
+		log.Printf("[TransactionsService.GetAverageByType] ERROR: Failed to fetch monthly totals: %v", err)
+		return nil, fmt.Errorf("failed to fetch monthly totals by type: %w", err)
 	}
 
-	// Group monthly sums by type
-	// Key: "type-year-month", Value: sum for that month
-	monthlySumsByTypeMonth := make(map[string]float64)
+	recurringTxs, err := s.transactionRepo.FindRecurringTransactionSummaryByType()
+	if err != nil {
+		log.Printf("[TransactionsService.GetAverageByType] ERROR: Failed to fetch recurring transactions: %v", err)
+		return nil, fmt.Errorf("failed to fetch recurring transactions by type: %w", err)
+	}
 
-	for _, tx := range transactions {
-		if tx.Date == nil {
+	type yearMonth struct{ year, month int }
+	typeMonthBuckets := make(map[string]map[yearMonth]float64)
+
+	// Determine global range start: earliest across non-recurring and recurring start dates
+	var rangeStartYear, rangeStartMonth int
+	rangeStartSet := false
+
+	updateRangeStart := func(y, m int) {
+		if !rangeStartSet || y < rangeStartYear || (y == rangeStartYear && m < rangeStartMonth) {
+			rangeStartYear = y
+			rangeStartMonth = m
+			rangeStartSet = true
+		}
+	}
+
+	for _, row := range monthlyTotals {
+		if typeMonthBuckets[row.Type] == nil {
+			typeMonthBuckets[row.Type] = make(map[yearMonth]float64)
+		}
+		typeMonthBuckets[row.Type][yearMonth{row.Year, row.Month}] += row.MonthlySum
+		updateRangeStart(row.Year, row.Month)
+	}
+
+	for _, tx := range recurringTxs {
+		if tx.StartDate == nil {
 			continue
 		}
-		monthKey := fmt.Sprintf("%s-%d-%d",
-			tx.Type,
-			tx.Date.Year(),
-			tx.Date.Month())
-
-		monthlySumsByTypeMonth[monthKey] += tx.Amount
+		updateRangeStart(tx.StartDate.Year(), int(tx.StartDate.Month()))
 	}
 
-	// Group monthly sums by type only (to calculate average across months)
-	monthlySumsByType := make(map[string][]float64)
+	if !rangeStartSet {
+		return nil, nil
+	}
 
-	for key, sum := range monthlySumsByTypeMonth {
-		// Extract type name (everything before the first dash followed by a digit)
-		typeName := extractTypeName(key)
-		monthlySumsByType[typeName] = append(monthlySumsByType[typeName], sum)
+	now := time.Now()
+	rangeStart := time.Date(rangeStartYear, time.Month(rangeStartMonth), 1, 0, 0, 0, 0, time.UTC)
+	rangeEnd := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	totalMonths := inclusiveMonthCount(rangeStart, rangeEnd)
+	if totalMonths < 1 {
+		totalMonths = 1
+	}
+
+	// Expand each recurring transaction into per-month buckets within its active range
+	for _, tx := range recurringTxs {
+		if tx.StartDate == nil {
+			continue
+		}
+		if typeMonthBuckets[tx.Type] == nil {
+			typeMonthBuckets[tx.Type] = make(map[yearMonth]float64)
+		}
+		txEnd := rangeEnd
+		if tx.EndDate != nil {
+			e := time.Date(tx.EndDate.Year(), tx.EndDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+			if e.Before(txEnd) {
+				txEnd = e
+			}
+		}
+		cur := time.Date(tx.StartDate.Year(), tx.StartDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+		for !cur.After(txEnd) {
+			typeMonthBuckets[tx.Type][yearMonth{cur.Year(), int(cur.Month())}] += tx.Amount
+			cur = cur.AddDate(0, 1, 0)
+		}
 	}
 
 	var result []AverageType
-	for typeName, monthlySums := range monthlySumsByType {
+	for typeName, buckets := range typeMonthBuckets {
 		var total float64
-		for _, sum := range monthlySums {
+		for _, sum := range buckets {
 			total += sum
 		}
-		average := total / float64(len(monthlySums))
-
 		result = append(result, AverageType{
 			TypeName: typeName,
-			Average:  average,
+			Average:  total / float64(totalMonths),
 		})
 	}
 
@@ -180,7 +223,7 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 		rangeEnd = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	}
 
-	totalMonths := monthsBetween(rangeStart, rangeEnd)
+	totalMonths := inclusiveMonthCount(rangeStart, rangeEnd)
 	if totalMonths < 1 {
 		totalMonths = 1
 	}
@@ -232,7 +275,7 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 			}
 		}
 
-		months := monthsBetween(activeStart, activeEnd)
+		months := inclusiveMonthCount(activeStart, activeEnd)
 		if months < 1 {
 			continue
 		}
@@ -260,16 +303,6 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 	}
 
 	return result, nil
-}
-
-func extractTypeName(key string) string {
-	// Find the position where the year starts (first digit after a dash)
-	for i := 0; i < len(key); i++ {
-		if key[i] == '-' && i+1 < len(key) && key[i+1] >= '0' && key[i+1] <= '9' {
-			return key[:i]
-		}
-	}
-	return key
 }
 
 func (s *transactionsService) GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error) {
@@ -322,7 +355,7 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 		return nil, errors.New("recurring transaction has already ended")
 	}
 
-	remainingMonths := monthsBetween(today, endDate) - 1
+	remainingMonths := exclusiveMonthCount(today, endDate)
 	if remainingMonths <= 0 {
 		return nil, errors.New("no remaining installments to prepay")
 	}
@@ -362,10 +395,18 @@ func (s *transactionsService) PrepayTransaction(ctx context.Context, id uint) (*
 	}, nil
 }
 
-func monthsBetween(start, end time.Time) int {
+// inclusiveMonthCount returns the number of calendar months spanned, counting both endpoints.
+// e.g. Jan → Jan = 1, Jan → Mar = 3.
+func inclusiveMonthCount(start, end time.Time) int {
 	years := end.Year() - start.Year()
 	months := int(end.Month()) - int(start.Month())
 	return years*12 + months + 1
+}
+
+// exclusiveMonthCount returns the number of months strictly after start and up to end.
+// Used when the current month is already paid and only future months remain.
+func exclusiveMonthCount(start, end time.Time) int {
+	return inclusiveMonthCount(start, end) - 1
 }
 
 func (s *transactionsService) GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error) {

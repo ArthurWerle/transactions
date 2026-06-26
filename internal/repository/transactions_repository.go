@@ -22,6 +22,20 @@ type RecurringCategoryExpense struct {
 	EndDate      *time.Time `gorm:"column:end_date"`
 }
 
+type MonthlyTypeTotal struct {
+	Type       string  `gorm:"column:type"`
+	Year       int     `gorm:"column:year"`
+	Month      int     `gorm:"column:month"`
+	MonthlySum float64 `gorm:"column:monthly_sum"`
+}
+
+type RecurringTypeTransaction struct {
+	Type      string     `gorm:"column:type"`
+	Amount    float64    `gorm:"column:amount"`
+	StartDate *time.Time `gorm:"column:start_date"`
+	EndDate   *time.Time `gorm:"column:end_date"`
+}
+
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
@@ -45,6 +59,8 @@ type TransactionsRepository interface {
 	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
 	FindCurrentMonthTotalByType(transactionType string) (float64, error)
 	FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error)
+	FindNonRecurringMonthlyTotalsByType() ([]MonthlyTypeTotal, error)
+	FindRecurringTransactionSummaryByType() ([]RecurringTypeTransaction, error)
 }
 
 type transactionsRepository struct {
@@ -365,4 +381,32 @@ func (r *transactionsRepository) FindCurrentMonthTotalByTypeAndCategory(transact
 	`, transactionType, categoryID, startOfMonth, endOfMonth, endOfMonth, startOfMonth).Scan(&result).Error
 
 	return result.Total, err
+}
+
+func (r *transactionsRepository) FindNonRecurringMonthlyTotalsByType() ([]MonthlyTypeTotal, error) {
+	var results []MonthlyTypeTotal
+	err := r.db.Raw(`
+		SELECT type,
+		       EXTRACT(year FROM date)::int  AS year,
+		       EXTRACT(month FROM date)::int AS month,
+		       SUM(amount)                   AS monthly_sum
+		FROM transactions
+		WHERE is_recurring = false
+		  AND date IS NOT NULL
+		  AND deleted_at IS NULL
+		GROUP BY type, year, month
+	`).Scan(&results).Error
+	return results, err
+}
+
+func (r *transactionsRepository) FindRecurringTransactionSummaryByType() ([]RecurringTypeTransaction, error) {
+	var results []RecurringTypeTransaction
+	err := r.db.Raw(`
+		SELECT type, amount, start_date, end_date
+		FROM transactions
+		WHERE is_recurring = true
+		  AND start_date IS NOT NULL
+		  AND deleted_at IS NULL
+	`).Scan(&results).Error
+	return results, err
 }
