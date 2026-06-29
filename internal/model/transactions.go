@@ -14,6 +14,8 @@ type Transaction struct {
 	CategoryID    *uint          `gorm:"column:category_id" json:"category_id"`
 	SubcategoryID *uint          `gorm:"column:subcategory_id" json:"subcategory_id"`
 	Subcategory   *Subcategory   `gorm:"foreignKey:SubcategoryID" json:"subcategory,omitempty"`
+	LocationID    *uint          `gorm:"column:location_id" json:"location_id"`
+	Location      *Location      `gorm:"foreignKey:LocationID" json:"location,omitempty"`
 	Amount        float64        `gorm:"type:decimal(12,2);not null" json:"amount"`
 	Type          string         `gorm:"type:transaction_type;not null" json:"type"`
 	Subtype       *string        `gorm:"type:transaction_subtype" json:"subtype"`

@@ -48,14 +48,19 @@ func main() {
 		&model.Transaction{},
 		&model.Category{},
 		&model.Subcategory{},
+		&model.Location{},
 	); err != nil {
 		logger.Error("failed to auto migrate", "error", err)
 		os.Exit(1)
 	}
 
+	locationRepo := repository.NewLocationRepository(db)
+	locationService := service.NewLocationService(locationRepo)
+	locationHandler := handler.NewLocationHandler(locationService)
+
 	transactionRepo := repository.NewTransactionsRepository(db)
 	transactionService := service.NewTransactionsService(transactionRepo)
-	transactionHandler := handler.NewTransactionHandler(transactionService)
+	transactionHandler := handler.NewTransactionHandler(transactionService, locationService)
 
 	categoryRepo := repository.NewCategoryRepository(db)
 	categoryService := service.NewCategoryService(categoryRepo)
@@ -65,7 +70,7 @@ func main() {
 	subcategoryService := service.NewSubcategoryService(subcategoryRepo)
 	subcategoryHandler := handler.NewSubcategoryHandler(subcategoryService)
 
-	router := setupRouter(cfg, logger, transactionHandler, categoryHandler, subcategoryHandler)
+	router := setupRouter(cfg, logger, transactionHandler, categoryHandler, subcategoryHandler, locationHandler)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.Server.Port),
@@ -98,7 +103,7 @@ func main() {
 	logger.Info("server exited")
 }
 
-func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler, categoryHandler *handler.CategoryHandler, subcategoryHandler *handler.SubcategoryHandler) *gin.Engine {
+func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *handler.TransactionHandler, categoryHandler *handler.CategoryHandler, subcategoryHandler *handler.SubcategoryHandler, locationHandler *handler.LocationHandler) *gin.Engine {
 	if cfg.Log.Level != "debug" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -157,6 +162,16 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			subcategories.GET("/:id", subcategoryHandler.GetSubcategoryByID)
 			subcategories.PUT("/:id", subcategoryHandler.UpdateSubcategory)
 			subcategories.DELETE("/:id", subcategoryHandler.DeleteSubcategory)
+		}
+
+		locations := v1.Group("/locations")
+		{
+			locations.GET("", locationHandler.GetLocations)
+			locations.POST("", locationHandler.CreateLocation)
+			locations.POST("/merge", locationHandler.MergeLocations)
+			locations.GET("/:id", locationHandler.GetLocationByID)
+			locations.PUT("/:id", locationHandler.UpdateLocation)
+			locations.DELETE("/:id", locationHandler.DeleteLocation)
 		}
 	}
 
