@@ -53,7 +53,9 @@ type CreateTransactionRequest struct {
 	CreatedById   uint  `json:"created_by_id"`
 	Amount      float64 `json:"amount" binding:"required"`
 	Type        string  `json:"type" binding:"required"`
+	// Deprecated: do not use. Will be removed.
 	Subtype     *string `json:"subtype,omitempty"`
+	Origin      string  `json:"origin,omitempty"`
 	Description *string `json:"description,omitempty"`
 	Date        *string `json:"date,omitempty"`
 	Frequency   *string `json:"frequency,omitempty"`
@@ -93,6 +95,11 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 		return
 	}
 
+	validOrigins := map[string]bool{"web": true, "api": true, "mcp": true}
+	if req.Origin == "" || !validOrigins[req.Origin] {
+		req.Origin = "api"
+	}
+
 	transaction := &model.Transaction{
 		IsRecurring:   req.IsRecurring,
 		CategoryID:    req.CategoryID,
@@ -101,6 +108,7 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 		Amount:      req.Amount,
 		Type:        req.Type,
 		Subtype:     req.Subtype,
+		Origin:      req.Origin,
 		Description: req.Description,
 		Frequency:   req.Frequency,
 	}
@@ -446,6 +454,7 @@ type UpdateTransactionRequest struct {
 	SubcategoryID *uint `json:"subcategory_id,omitempty"`
 	Amount      *float64 `json:"amount,omitempty"`
 	Type        *string  `json:"type,omitempty"`
+	// Deprecated: do not use. Will be removed.
 	Subtype     *string  `json:"subtype,omitempty"`
 	Description *string  `json:"description,omitempty"`
 	Date        *string  `json:"date,omitempty"`
@@ -515,9 +524,6 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 			return
 		}
 		transaction.Type = *req.Type
-	}
-	if req.Subtype != nil {
-		transaction.Subtype = req.Subtype
 	}
 	if req.Description != nil {
 		transaction.Description = req.Description

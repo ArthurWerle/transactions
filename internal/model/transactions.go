@@ -18,7 +18,9 @@ type Transaction struct {
 	Location      *Location      `gorm:"foreignKey:LocationID" json:"location,omitempty"`
 	Amount        float64        `gorm:"type:decimal(12,2);not null" json:"amount"`
 	Type          string         `gorm:"type:transaction_type;not null" json:"type"`
-	Subtype       *string        `gorm:"type:transaction_subtype" json:"subtype"`
+	// Deprecated: Subtype will be removed. Do not use.
+	Subtype       *string        `gorm:"type:transaction_subtype" json:"subtype,omitempty"`
+	Origin        string         `gorm:"type:transaction_origin;not null;default:api" json:"origin"`
 	Description   *string        `gorm:"type:text" json:"description"`
 	Date          *time.Time     `gorm:"type:timestamptz" json:"date"`
 	Frequency     *string        `gorm:"type:varchar(50)" json:"frequency"`
