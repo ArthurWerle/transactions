@@ -14,12 +14,36 @@ import (
 
 type TransactionHandler struct {
 	transactionService service.TransactionsService
+	locationService    service.LocationService
 }
 
-func NewTransactionHandler(transactionService service.TransactionsService) *TransactionHandler {
+func NewTransactionHandler(transactionService service.TransactionsService, locationService service.LocationService) *TransactionHandler {
 	return &TransactionHandler{
 		transactionService: transactionService,
+		locationService:    locationService,
 	}
+}
+
+// resolveLocation turns an optional free-text location name into a location_id.
+// A non-empty name is deduplicated via FindOrCreate; an explicitly empty string
+// clears the location. Returns (locationID, cleared, ok); ok is false when an
+// error response has already been written.
+func (h *TransactionHandler) resolveLocation(c *gin.Context, name *string) (*uint, bool, bool) {
+	if name == nil {
+		return nil, false, true
+	}
+	if strings.TrimSpace(*name) == "" {
+		return nil, true, true
+	}
+	location, err := h.locationService.FindOrCreate(c.Request.Context(), *name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to resolve location",
+			"details": err.Error(),
+		})
+		return nil, false, false
+	}
+	return &location.ID, false, true
 }
 
 type CreateTransactionRequest struct {
@@ -35,6 +59,7 @@ type CreateTransactionRequest struct {
 	Frequency   *string `json:"frequency,omitempty"`
 	StartDate   *string `json:"start_date,omitempty"`
 	EndDate     *string `json:"end_date,omitempty"`
+	Location    *string `json:"location,omitempty"`
 }
 
 func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
@@ -113,6 +138,12 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 			return
 		}
 		transaction.EndDate = &parsedEndDate
+	}
+
+	if locationID, _, ok := h.resolveLocation(c, req.Location); ok {
+		transaction.LocationID = locationID
+	} else {
+		return
 	}
 
 	if err := h.transactionService.CreateTransaction(c.Request.Context(), transaction); err != nil {
@@ -421,6 +452,7 @@ type UpdateTransactionRequest struct {
 	Frequency   *string  `json:"frequency,omitempty"`
 	StartDate   *string  `json:"start_date,omitempty"`
 	EndDate     *string  `json:"end_date,omitempty"`
+	Location    *string  `json:"location,omitempty"`
 }
 
 func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
@@ -527,6 +559,16 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 			return
 		}
 		transaction.EndDate = &parsedEndDate
+	}
+
+	if locationID, cleared, ok := h.resolveLocation(c, req.Location); ok {
+		if cleared {
+			transaction.LocationID = nil
+		} else if locationID != nil {
+			transaction.LocationID = locationID
+		}
+	} else {
+		return
 	}
 
 	if err := h.transactionService.UpdateTransaction(c.Request.Context(), transaction); err != nil {
