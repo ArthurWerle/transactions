@@ -9,6 +9,6 @@ DO $$
 $$;
 
 ALTER TABLE transactions
-    ADD COLUMN IF NOT EXISTS origin transaction_origin NOT NULL DEFAULT 'api';
+    ADD COLUMN IF NOT EXISTS origin transaction_origin NOT NULL DEFAULT 'web';
 
 COMMENT ON COLUMN transactions.subtype IS 'Deprecated: do not use. Will be removed in a future migration.';

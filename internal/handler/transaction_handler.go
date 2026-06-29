@@ -97,7 +97,7 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 
 	validOrigins := map[string]bool{"web": true, "api": true, "mcp": true}
 	if req.Origin == "" || !validOrigins[req.Origin] {
-		req.Origin = "api"
+		req.Origin = "web"
 	}
 
 	transaction := &model.Transaction{

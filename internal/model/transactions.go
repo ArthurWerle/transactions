@@ -20,7 +20,7 @@ type Transaction struct {
 	Type          string         `gorm:"type:transaction_type;not null" json:"type"`
 	// Deprecated: Subtype will be removed. Do not use.
 	Subtype       *string        `gorm:"type:transaction_subtype" json:"subtype,omitempty"`
-	Origin        string         `gorm:"type:transaction_origin;not null;default:api" json:"origin"`
+	Origin        string         `gorm:"type:transaction_origin;not null;default:web" json:"origin"`
 	Description   *string        `gorm:"type:text" json:"description"`
 	Date          *time.Time     `gorm:"type:timestamptz" json:"date"`
 	Frequency     *string        `gorm:"type:varchar(50)" json:"frequency"`
