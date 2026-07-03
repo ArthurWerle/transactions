@@ -23,7 +23,7 @@ type Transaction struct {
 	Origin        string         `gorm:"type:transaction_origin;not null;default:web" json:"origin"`
 	Description   *string        `gorm:"type:text" json:"description"`
 	Date          *time.Time     `gorm:"type:timestamptz" json:"date"`
-	Frequency     *string        `gorm:"type:varchar(50)" json:"frequency"`
+	Frequency     *string        `gorm:"type:transaction_frequency" json:"frequency"`
 	StartDate     *time.Time     `gorm:"type:date;column:start_date" json:"start_date"`
 	EndDate       *time.Time     `gorm:"type:date;column:end_date" json:"end_date"`
 	PrepaidFromID *uint          `gorm:"column:prepaid_from_id" json:"prepaid_from_id"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,13 +13,15 @@ import (
 )
 
 type mockTransactionsRepository struct {
-	transactions    map[uint]*model.Transaction
-	prepayErr       error
-	nonRecurringSums []repository.CategoryExpenseSummary
+	transactions      map[uint]*model.Transaction
+	created           []*model.Transaction
+	nonRecurringSums  []repository.CategoryExpenseSummary
 	recurringExpenses []repository.RecurringCategoryExpense
-	earliestDate    *time.Time
-	monthlyTotals   []repository.MonthlyTypeTotal
-	recurringByType []repository.RecurringTypeTransaction
+	earliestDate      *time.Time
+	monthlyTotals     []repository.MonthlyTypeTotal
+	recurringByType   []repository.RecurringTypeTransaction
+	incomeTotal       float64
+	recurringIncomes  []repository.RecurringAmount
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -32,6 +35,7 @@ func (m *mockTransactionsRepository) Create(transaction *model.Transaction) erro
 		transaction.ID = uint(len(m.transactions) + 1)
 	}
 	m.transactions[transaction.ID] = transaction
+	m.created = append(m.created, transaction)
 	return nil
 }
 
@@ -59,6 +63,10 @@ func (m *mockTransactionsRepository) CountAllWithFilters(currentMonth bool, cate
 	return 0, nil
 }
 
+func (m *mockTransactionsRepository) SumAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (float64, error) {
+	return 0, nil
+}
+
 func (m *mockTransactionsRepository) FindBiggest(month, year int) ([]model.Transaction, error) {
 	return nil, nil
 }
@@ -80,30 +88,8 @@ func (m *mockTransactionsRepository) FindByDateRange(startDate, endDate time.Tim
 	return nil, nil
 }
 
-func (m *mockTransactionsRepository) FindByType(transactionType string, limit, offset int) ([]model.Transaction, error) {
-	return nil, nil
-}
-
-func (m *mockTransactionsRepository) FindRecurring() ([]model.Transaction, error) {
-	return nil, nil
-}
-
 func (m *mockTransactionsRepository) FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error) {
 	return nil, nil
-}
-
-func (m *mockTransactionsRepository) FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error) {
-	return nil, nil
-}
-
-func (m *mockTransactionsRepository) PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error {
-	if m.prepayErr != nil {
-		return m.prepayErr
-	}
-	m.transactions[original.ID] = original
-	prepayment.ID = uint(len(m.transactions) + 1)
-	m.transactions[prepayment.ID] = prepayment
-	return nil
 }
 
 func (m *mockTransactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {
@@ -122,6 +108,14 @@ func (m *mockTransactionsRepository) FindRecurringExpensesInRange(startDate, end
 	return m.recurringExpenses, nil
 }
 
+func (m *mockTransactionsRepository) FindIncomeTotalInRange(startDate, endDate *time.Time) (float64, error) {
+	return m.incomeTotal, nil
+}
+
+func (m *mockTransactionsRepository) FindRecurringIncomesInRange(startDate, endDate *time.Time) ([]repository.RecurringAmount, error) {
+	return m.recurringIncomes, nil
+}
+
 func (m *mockTransactionsRepository) FindCurrentMonthTotalByType(transactionType string) (float64, error) {
 	return 0, nil
 }
@@ -138,7 +132,15 @@ func (m *mockTransactionsRepository) FindRecurringTransactionSummaryByType() ([]
 	return m.recurringByType, nil
 }
 
-// ---- inclusiveMonthCount tests ----
+func newTestService(repo repository.TransactionsRepository) TransactionsService {
+	return NewTransactionsService(repo, time.UTC)
+}
+
+func monthsAgo(n int) time.Time {
+	return MonthStart(time.Now().UTC()).AddDate(0, -n, 0)
+}
+
+// ---- month count tests ----
 
 func TestInclusiveMonthCount(t *testing.T) {
 	tests := []struct {
@@ -175,9 +177,9 @@ func TestInclusiveMonthCount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := inclusiveMonthCount(tt.start, tt.end)
+			result := InclusiveMonthCount(tt.start, tt.end)
 			if result != tt.expected {
-				t.Errorf("inclusiveMonthCount(%v, %v) = %d, expected %d", tt.start, tt.end, result, tt.expected)
+				t.Errorf("InclusiveMonthCount(%v, %v) = %d, expected %d", tt.start, tt.end, result, tt.expected)
 			}
 		})
 	}
@@ -212,27 +214,162 @@ func TestExclusiveMonthCount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exclusiveMonthCount(tt.start, tt.end)
+			result := ExclusiveMonthCount(tt.start, tt.end)
 			if result != tt.expected {
-				t.Errorf("exclusiveMonthCount(%v, %v) = %d, expected %d", tt.start, tt.end, result, tt.expected)
+				t.Errorf("ExclusiveMonthCount(%v, %v) = %d, expected %d", tt.start, tt.end, result, tt.expected)
 			}
 		})
 	}
 }
 
+// ---- validateTransactionShape tests ----
+
+func TestTransactionShapeValidation(t *testing.T) {
+	now := time.Now()
+	start := monthsAgo(3)
+	end := monthsAgo(0).AddDate(0, 2, 0)
+	monthly := MonthlyFrequency
+	weekly := "weekly"
+
+	tests := []struct {
+		name    string
+		tx      model.Transaction
+		wantErr string
+	}{
+		{
+			name: "valid one-off",
+			tx:   model.Transaction{Date: &now, Amount: 10, Type: "expense"},
+		},
+		{
+			name: "valid recurring",
+			tx:   model.Transaction{IsRecurring: true, StartDate: &start, EndDate: &end, Amount: 10, Type: "expense"},
+		},
+		{
+			name:    "recurring without start_date",
+			tx:      model.Transaction{IsRecurring: true, EndDate: &end},
+			wantErr: "start_date",
+		},
+		{
+			name:    "recurring with date",
+			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Date: &now},
+			wantErr: "must not have date",
+		},
+		{
+			name:    "recurring with non-monthly frequency",
+			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Frequency: &weekly},
+			wantErr: "monthly",
+		},
+		{
+			name:    "recurring with end before start",
+			tx:      model.Transaction{IsRecurring: true, StartDate: &end, EndDate: &start, Frequency: &monthly},
+			wantErr: "end_date must not be before start_date",
+		},
+		{
+			name:    "one-off without date",
+			tx:      model.Transaction{},
+			wantErr: "requires date",
+		},
+		{
+			name:    "one-off with schedule fields",
+			tx:      model.Transaction{Date: &now, EndDate: &end},
+			wantErr: "must not have start_date, end_date or frequency",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMockRepository()
+			svc := newTestService(repo)
+			tx := tt.tx
+			err := svc.CreateTransaction(context.Background(), &tx)
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected transaction to be valid, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !errors.Is(err, ErrInvalidTransaction) {
+				t.Errorf("error should wrap ErrInvalidTransaction, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q should mention %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCreateTransaction_DefaultsRecurringFrequencyToMonthly(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	start := monthsAgo(1)
+	tx := model.Transaction{IsRecurring: true, StartDate: &start, Amount: 10, Type: "expense"}
+	if err := svc.CreateTransaction(context.Background(), &tx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tx.Frequency == nil || *tx.Frequency != MonthlyFrequency {
+		t.Errorf("expected frequency to default to monthly, got %v", tx.Frequency)
+	}
+}
+
+func TestUpdateTransaction_NormalizesShape(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	now := time.Now()
+	start := monthsAgo(2)
+	end := monthsAgo(0)
+	weekly := "weekly"
+
+	// Legacy corrupted row: one-off carrying schedule fields (pre-F1 web data).
+	legacy := model.Transaction{ID: 1, Date: &now, EndDate: &end, Frequency: &weekly, Amount: 10, Type: "expense"}
+	if err := svc.UpdateTransaction(context.Background(), &legacy); err != nil {
+		t.Fatalf("expected legacy row to be healed, got %v", err)
+	}
+	if legacy.EndDate != nil || legacy.Frequency != nil {
+		t.Error("expected schedule fields to be cleared on non-recurring update")
+	}
+
+	// Flip to recurring: date must be cleared, frequency coerced to monthly.
+	rec := model.Transaction{ID: 2, IsRecurring: true, Date: &now, StartDate: &start, Frequency: &weekly, Amount: 10, Type: "expense"}
+	if err := svc.UpdateTransaction(context.Background(), &rec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Date != nil {
+		t.Error("expected date to be cleared on recurring update")
+	}
+	if rec.Frequency == nil || *rec.Frequency != MonthlyFrequency {
+		t.Errorf("expected frequency coerced to monthly, got %v", rec.Frequency)
+	}
+
+	// Flip to recurring without start_date must fail.
+	bad := model.Transaction{ID: 3, IsRecurring: true, Date: &now, Amount: 10, Type: "expense"}
+	if err := svc.UpdateTransaction(context.Background(), &bad); !errors.Is(err, ErrInvalidTransaction) {
+		t.Errorf("expected ErrInvalidTransaction, got %v", err)
+	}
+}
+
 // ---- GetAverageByType tests ----
 
-func TestGetAverageByType_NonRecurringOnly(t *testing.T) {
-	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+func lastCompleteMonth() time.Time {
+	return MonthStart(time.Now().UTC()).AddDate(0, -1, 0)
+}
 
-	// Jan 2026: expense $100, income $200
-	// Feb 2026: expense $150
-	// Range: Jan–Feb (2 months for expense), Jan only for income → but total range is Jan–Feb = 2 months
+func TestGetAverageByType_PerTypeRanges(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// income since 6 months ago, expenses only since 2 months ago: each type
+	// must be averaged over its own range (F7).
+	incomeMonth := monthsAgo(6)
+	expenseMonth := monthsAgo(2)
 	repo.monthlyTotals = []repository.MonthlyTypeTotal{
-		{Type: "expense", Year: 2026, Month: 1, MonthlySum: 100},
-		{Type: "expense", Year: 2026, Month: 2, MonthlySum: 150},
-		{Type: "income", Year: 2026, Month: 1, MonthlySum: 200},
+		{Type: "income", Year: incomeMonth.Year(), Month: int(incomeMonth.Month()), MonthlySum: 600},
+		{Type: "expense", Year: expenseMonth.Year(), Month: int(expenseMonth.Month()), MonthlySum: 200},
 	}
 
 	result, err := svc.GetAverageByType(context.Background())
@@ -245,28 +382,70 @@ func TestGetAverageByType_NonRecurringOnly(t *testing.T) {
 		byType[r.TypeName] = r.Average
 	}
 
-	// expense: (100+150) / totalMonths; income: 200 / totalMonths
-	// totalMonths = from Jan 2026 to now (at least 2 months since we're in 2026)
-	// We only verify expense > income since current month is unknown at test time
-	if byType["expense"] <= 0 {
-		t.Errorf("expected positive expense average, got %v", byType["expense"])
+	expectedIncome := 600.0 / float64(InclusiveMonthCount(incomeMonth, lastCompleteMonth()))
+	expectedExpense := 200.0 / float64(InclusiveMonthCount(expenseMonth, lastCompleteMonth()))
+
+	if math.Abs(byType["income"]-expectedIncome) > 0.001 {
+		t.Errorf("income average = %v, expected %v", byType["income"], expectedIncome)
 	}
-	if byType["income"] <= 0 {
-		t.Errorf("expected positive income average, got %v", byType["income"])
-	}
-	// expense total ($250) must be greater than income total ($200)
-	if byType["expense"] <= byType["income"] {
-		t.Errorf("expense average %v should be > income average %v given totals $250 vs $200", byType["expense"], byType["income"])
+	if math.Abs(byType["expense"]-expectedExpense) > 0.001 {
+		t.Errorf("expense average = %v, expected %v", byType["expense"], expectedExpense)
 	}
 }
 
-func TestGetAverageByType_RecurringOnly(t *testing.T) {
+func TestGetAverageByType_ExcludesCurrentMonth(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	// Recurring $20/month expense, Jan 2026 → Mar 2026 (3 months active)
-	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	// One complete month of data plus a huge current-month total: the
+	// in-progress month must not dilute or inflate the average.
+	previous := monthsAgo(1)
+	current := monthsAgo(0)
+	repo.monthlyTotals = []repository.MonthlyTypeTotal{
+		{Type: "expense", Year: previous.Year(), Month: int(previous.Month()), MonthlySum: 100},
+		{Type: "expense", Year: current.Year(), Month: int(current.Month()), MonthlySum: 9999},
+	}
+
+	result, err := svc.GetAverageByType(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 type, got %d", len(result))
+	}
+	if result[0].Average != 100 {
+		t.Errorf("expected average 100 (current month excluded), got %v", result[0].Average)
+	}
+}
+
+func TestGetAverageByType_CurrentMonthOnlyFallback(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	current := monthsAgo(0)
+	repo.monthlyTotals = []repository.MonthlyTypeTotal{
+		{Type: "expense", Year: current.Year(), Month: int(current.Month()), MonthlySum: 300},
+	}
+
+	result, err := svc.GetAverageByType(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 type, got %d", len(result))
+	}
+	if result[0].Average != 300 {
+		t.Errorf("expected current-month fallback average 300, got %v", result[0].Average)
+	}
+}
+
+func TestGetAverageByType_RecurringExpansion(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// Recurring $20/month over the last 3 complete months (ends last month).
+	start := monthsAgo(3)
+	end := monthsAgo(1)
 	repo.recurringByType = []repository.RecurringTypeTransaction{
 		{Type: "expense", Amount: 20, StartDate: &start, EndDate: &end},
 	}
@@ -275,40 +454,28 @@ func TestGetAverageByType_RecurringOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if len(result) != 1 {
 		t.Fatalf("expected 1 type, got %d", len(result))
 	}
 
-	entry := result[0]
-	if entry.TypeName != "expense" {
-		t.Errorf("expected type 'expense', got %q", entry.TypeName)
-	}
-
-	// Total contribution: $20 × 3 = $60
-	// totalMonths = Jan 2026 → current month (at least 3, grows over time)
-	// Average ≤ $20 (since totalMonths ≥ 3 and total = $60)
-	if entry.Average > 20 {
-		t.Errorf("average %v should not exceed $20/month (the recurring amount)", entry.Average)
-	}
-	if entry.Average <= 0 {
-		t.Errorf("expected positive average, got %v", entry.Average)
+	// Total = $20 × 3 active months; range = start..lastComplete = 3 months.
+	if math.Abs(result[0].Average-20) > 0.001 {
+		t.Errorf("expected average 20, got %v", result[0].Average)
 	}
 }
 
 func TestGetAverageByType_MixedRecurringAndNon(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	// Non-recurring: $50 expense in Jan 2026
-	// Recurring:     $20/month expense Jan–Mar 2026 (3 months = $60)
-	// Total expense: $50 + $60 = $110
-	// Range: Jan 2026 → current month
-	recurringStart := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	recurringEnd := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	// Non-recurring $50 three months ago; recurring $20/month from 3 months
+	// ago through last month (3 complete months = $60). Range = 3 months.
+	oneOff := monthsAgo(3)
+	recurringStart := monthsAgo(3)
+	recurringEnd := monthsAgo(1)
 
 	repo.monthlyTotals = []repository.MonthlyTypeTotal{
-		{Type: "expense", Year: 2026, Month: 1, MonthlySum: 50},
+		{Type: "expense", Year: oneOff.Year(), Month: int(oneOff.Month()), MonthlySum: 50},
 	}
 	repo.recurringByType = []repository.RecurringTypeTransaction{
 		{Type: "expense", Amount: 20, StartDate: &recurringStart, EndDate: &recurringEnd},
@@ -318,94 +485,19 @@ func TestGetAverageByType_MixedRecurringAndNon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if len(result) != 1 {
 		t.Fatalf("expected 1 type, got %d", len(result))
 	}
 
-	// Total = $50 (one-off Jan) + $20×3 (recurring Jan–Mar) = $110
-	// Average = $110 / totalMonths; confirm total is $110 by checking average * months
-	now := time.Now()
-	rangeStart := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	rangeEnd := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	expectedMonths := inclusiveMonthCount(rangeStart, rangeEnd)
-	expectedAverage := 110.0 / float64(expectedMonths)
-
-	if math.Abs(result[0].Average-expectedAverage) > 0.01 {
-		t.Errorf("expected average %.4f (110 / %d months), got %.4f", expectedAverage, expectedMonths, result[0].Average)
-	}
-}
-
-func TestGetAverageByType_RecurringWithEndDate(t *testing.T) {
-	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
-
-	// Recurring $100/month expense, Feb 2026 only (start = end = Feb)
-	start := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	repo.recurringByType = []repository.RecurringTypeTransaction{
-		{Type: "expense", Amount: 100, StartDate: &start, EndDate: &end},
-	}
-
-	result, err := svc.GetAverageByType(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result) != 1 {
-		t.Fatalf("expected 1 type, got %d", len(result))
-	}
-
-	// Total = $100 (1 month active), average = $100 / totalMonths
-	// totalMonths = Feb 2026 → now; average must be ≤ $100 and > 0
-	if result[0].Average > 100 {
-		t.Errorf("average %v should not exceed $100 (single month contribution)", result[0].Average)
-	}
-	if result[0].Average <= 0 {
-		t.Errorf("expected positive average, got %v", result[0].Average)
-	}
-}
-
-func TestGetAverageByType_MultipleTypes(t *testing.T) {
-	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
-
-	// Jan 2026: expense $300, income $500
-	repo.monthlyTotals = []repository.MonthlyTypeTotal{
-		{Type: "expense", Year: 2026, Month: 1, MonthlySum: 300},
-		{Type: "income", Year: 2026, Month: 1, MonthlySum: 500},
-	}
-
-	result, err := svc.GetAverageByType(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result) != 2 {
-		t.Fatalf("expected 2 types, got %d", len(result))
-	}
-
-	byType := make(map[string]float64)
-	for _, r := range result {
-		byType[r.TypeName] = r.Average
-	}
-
-	if _, ok := byType["expense"]; !ok {
-		t.Error("missing 'expense' type in result")
-	}
-	if _, ok := byType["income"]; !ok {
-		t.Error("missing 'income' type in result")
-	}
-
-	// income total ($500) > expense total ($300); averages share same denominator
-	if byType["income"] <= byType["expense"] {
-		t.Errorf("income average %v should be > expense average %v", byType["income"], byType["expense"])
+	expected := (50.0 + 60.0) / 3.0
+	if math.Abs(result[0].Average-expected) > 0.001 {
+		t.Errorf("expected average %.4f, got %.4f", expected, result[0].Average)
 	}
 }
 
 func TestGetAverageByType_EmptyData(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
 	result, err := svc.GetAverageByType(context.Background())
 	if err != nil {
@@ -419,12 +511,14 @@ func TestGetAverageByType_EmptyData(t *testing.T) {
 
 // ---- PrepayTransaction tests ----
 
-func TestPrepayTransaction_Success(t *testing.T) {
+func TestPrepayTransaction_StartedSchedule(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	startDate := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	endDate := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	// Started 6 months ago, ends 3 months from now. The current month counts
+	// as paid, so 3 installments remain.
+	startDate := monthsAgo(6)
+	endDate := monthsAgo(0).AddDate(0, 3, 0)
 	desc := "Parcela TV"
 
 	original := &model.Transaction{
@@ -444,31 +538,66 @@ func TestPrepayTransaction_Success(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if result.PrepayTransaction == nil {
-		t.Fatal("expected prepay transaction to be created")
+	if result.RemainingMonths != 3 {
+		t.Errorf("expected 3 remaining months, got %d", result.RemainingMonths)
+	}
+	if result.PrepaidAmount != 1500 {
+		t.Errorf("expected prepaid amount 1500, got %v", result.PrepaidAmount)
+	}
+
+	// Consumption basis (F9): the original schedule stays untouched.
+	if !original.EndDate.Equal(endDate) {
+		t.Errorf("original end_date must not change, got %v", original.EndDate)
 	}
 
 	if result.PrepayTransaction.IsRecurring {
 		t.Error("prepay transaction should not be recurring")
 	}
-
 	if result.PrepayTransaction.PrepaidFromID == nil || *result.PrepayTransaction.PrepaidFromID != 1 {
 		t.Error("prepay transaction should reference original transaction")
 	}
+	if result.PrepayTransaction.Date == nil {
+		t.Error("prepay transaction should be dated")
+	}
+}
 
-	if result.RemainingMonths <= 0 {
-		t.Error("should have remaining months")
+func TestPrepayTransaction_FutureStartCountsAllInstallments(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// Starts in 3 months, ends in 5 months: 3 installments, none paid (F3).
+	startDate := monthsAgo(0).AddDate(0, 3, 0)
+	endDate := monthsAgo(0).AddDate(0, 5, 0)
+
+	original := &model.Transaction{
+		ID:          1,
+		IsRecurring: true,
+		Amount:      500.00,
+		Type:        "expense",
+		StartDate:   &startDate,
+		EndDate:     &endDate,
+	}
+	repo.transactions[1] = original
+
+	result, err := svc.PrepayTransaction(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 
-	expectedAmount := original.Amount * float64(result.RemainingMonths)
-	if result.PrepaidAmount != expectedAmount {
-		t.Errorf("expected prepaid amount %v, got %v", expectedAmount, result.PrepaidAmount)
+	if result.RemainingMonths != 3 {
+		t.Errorf("expected 3 remaining months for a 3-installment future plan, got %d", result.RemainingMonths)
+	}
+	if result.PrepaidAmount != 1500 {
+		t.Errorf("expected prepaid amount 1500, got %v", result.PrepaidAmount)
+	}
+	if !original.EndDate.Equal(endDate) {
+		t.Errorf("original end_date must not change, got %v", original.EndDate)
 	}
 }
 
 func TestPrepayTransaction_NotRecurring(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
 	original := &model.Transaction{
 		ID:          1,
@@ -490,9 +619,9 @@ func TestPrepayTransaction_NotRecurring(t *testing.T) {
 
 func TestPrepayTransaction_NoEndDate(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	startDate := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	startDate := monthsAgo(3)
 
 	original := &model.Transaction{
 		ID:          1,
@@ -516,9 +645,9 @@ func TestPrepayTransaction_NoEndDate(t *testing.T) {
 
 func TestPrepayTransaction_NoStartDate(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	endDate := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	endDate := monthsAgo(0).AddDate(0, 3, 0)
 
 	original := &model.Transaction{
 		ID:          1,
@@ -542,10 +671,10 @@ func TestPrepayTransaction_NoStartDate(t *testing.T) {
 
 func TestPrepayTransaction_AlreadyEnded(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	endDate := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	startDate := monthsAgo(8)
+	endDate := monthsAgo(2)
 
 	original := &model.Transaction{
 		ID:          1,
@@ -567,9 +696,36 @@ func TestPrepayTransaction_AlreadyEnded(t *testing.T) {
 	}
 }
 
+func TestPrepayTransaction_EndsThisMonthHasNothingLeft(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	startDate := monthsAgo(5)
+	endDate := monthsAgo(0)
+
+	original := &model.Transaction{
+		ID:          1,
+		IsRecurring: true,
+		Amount:      500.00,
+		Type:        "expense",
+		StartDate:   &startDate,
+		EndDate:     &endDate,
+	}
+	repo.transactions[1] = original
+
+	_, err := svc.PrepayTransaction(context.Background(), 1)
+	if err == nil {
+		t.Fatal("expected error when the current month is the last installment")
+	}
+
+	if err.Error() != "no remaining installments to prepay" {
+		t.Errorf("expected 'no remaining installments to prepay' error, got %v", err)
+	}
+}
+
 func TestPrepayTransaction_NotFound(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
 	_, err := svc.PrepayTransaction(context.Background(), 999)
 	if err == nil {
@@ -583,10 +739,10 @@ func TestPrepayTransaction_NotFound(t *testing.T) {
 
 func TestPrepayTransaction_DescriptionFormat(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
-	startDate := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	endDate := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	startDate := monthsAgo(4)
+	endDate := monthsAgo(0).AddDate(0, 4, 0)
 	desc := "Parcela Geladeira"
 
 	original := &model.Transaction{
@@ -610,9 +766,8 @@ func TestPrepayTransaction_DescriptionFormat(t *testing.T) {
 		t.Fatal("prepay transaction should have description")
 	}
 
-	expectedDescPrefix := "Adiantamento de"
-	if len(*result.PrepayTransaction.Description) < len(expectedDescPrefix) {
-		t.Errorf("description should start with '%s'", expectedDescPrefix)
+	if !strings.HasPrefix(*result.PrepayTransaction.Description, "Adiantamento de") {
+		t.Errorf("description should start with 'Adiantamento de', got %q", *result.PrepayTransaction.Description)
 	}
 }
 
@@ -620,7 +775,7 @@ func TestPrepayTransaction_DescriptionFormat(t *testing.T) {
 
 func TestGetAverageByCategory_IncludesRecurring(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
 	catID := uint(5)
 	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -634,7 +789,7 @@ func TestGetAverageByCategory_IncludesRecurring(t *testing.T) {
 		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: nil},
 	}
 
-	result, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	result, _, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -659,11 +814,16 @@ func TestGetAverageByCategory_IncludesRecurring(t *testing.T) {
 	if entry.Average != expectedAverage {
 		t.Errorf("expected Average %.2f, got %.2f", expectedAverage, entry.Average)
 	}
+
+	// No income in range → no percent_of_income
+	if entry.PercentOfIncome != nil {
+		t.Errorf("expected nil PercentOfIncome without income, got %v", *entry.PercentOfIncome)
+	}
 }
 
 func TestGetAverageByCategory_MixesRecurringAndNonRecurring(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
 	catID := uint(5)
 	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -680,7 +840,7 @@ func TestGetAverageByCategory_MixesRecurringAndNonRecurring(t *testing.T) {
 		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: nil},
 	}
 
-	result, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	result, _, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -701,9 +861,47 @@ func TestGetAverageByCategory_MixesRecurringAndNonRecurring(t *testing.T) {
 	}
 }
 
+func TestGetAverageByCategory_PercentOfIncome(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	catID := uint(5)
+	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) // 6 months
+
+	repo.nonRecurringSums = []repository.CategoryExpenseSummary{
+		{CategoryID: &catID, CategoryName: "Housing", TotalSpent: 3000.0},
+	}
+	// Income: R$1,000 one-off + R$1,500/month recurring salary over all 6
+	// months = R$10,000 total.
+	repo.incomeTotal = 1000.0
+	salaryStart := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	repo.recurringIncomes = []repository.RecurringAmount{
+		{Amount: 1500.0, StartDate: &salaryStart, EndDate: nil},
+	}
+
+	result, totalIncome, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if totalIncome != 10000.0 {
+		t.Errorf("expected total income 10000, got %v", totalIncome)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 category, got %d", len(result))
+	}
+	if result[0].PercentOfIncome == nil {
+		t.Fatal("expected percent_of_income to be set")
+	}
+	if math.Abs(*result[0].PercentOfIncome-30.0) > 0.001 {
+		t.Errorf("expected percent_of_income 30, got %v", *result[0].PercentOfIncome)
+	}
+}
+
 func TestGetAverageByCategory_RecurringEndedBeforeRange(t *testing.T) {
 	repo := newMockRepository()
-	svc := NewTransactionsService(repo)
+	svc := newTestService(repo)
 
 	catID := uint(5)
 	startDate := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -716,7 +914,7 @@ func TestGetAverageByCategory_RecurringEndedBeforeRange(t *testing.T) {
 		{CategoryID: &catID, CategoryName: "Eletrodomestics", Amount: 500.0, StartDate: &recurringStart, EndDate: &recurringEnd},
 	}
 
-	result, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
+	result, _, err := svc.GetAverageByCategory(context.Background(), &startDate, &endDate)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -724,5 +922,37 @@ func TestGetAverageByCategory_RecurringEndedBeforeRange(t *testing.T) {
 	// Transaction ended before range, should contribute nothing
 	if len(result) != 0 {
 		t.Errorf("expected 0 categories, got %d (transaction ended before range)", len(result))
+	}
+}
+
+func TestGetAverageByCategory_DefaultRangeExcludesCurrentMonth(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	catID := uint(5)
+	// Recurring R$100/month, active from 4 months ago with no end. Without an
+	// explicit end date the range must stop at the last complete month, so
+	// the current month contributes neither spend nor a denominator slot.
+	recurringStart := monthsAgo(4)
+	repo.recurringExpenses = []repository.RecurringCategoryExpense{
+		{CategoryID: &catID, CategoryName: "Streaming", Amount: 100.0, StartDate: &recurringStart, EndDate: nil},
+	}
+	earliest := recurringStart
+	repo.earliestDate = &earliest
+
+	result, _, err := svc.GetAverageByCategory(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 category, got %d", len(result))
+	}
+
+	// 4 complete months (monthsAgo(4) .. monthsAgo(1)) × R$100 / 4 = R$100.
+	if result[0].TotalSpent != 400 {
+		t.Errorf("expected TotalSpent 400, got %v", result[0].TotalSpent)
+	}
+	if result[0].Average != 100 {
+		t.Errorf("expected Average 100, got %v", result[0].Average)
 	}
 }
