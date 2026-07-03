@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/ArthurWerle/transactions/internal/config"
 	"github.com/ArthurWerle/transactions/internal/handler"
@@ -54,13 +55,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	reportingLoc, err := time.LoadLocation(cfg.Reporting.Timezone)
+	if err != nil {
+		logger.Error("invalid REPORTING_TIMEZONE", "timezone", cfg.Reporting.Timezone, "error", err)
+		os.Exit(1)
+	}
+
 	locationRepo := repository.NewLocationRepository(db)
 	locationService := service.NewLocationService(locationRepo)
 	locationHandler := handler.NewLocationHandler(locationService)
 
-	transactionRepo := repository.NewTransactionsRepository(db)
-	transactionService := service.NewTransactionsService(transactionRepo)
-	transactionHandler := handler.NewTransactionHandler(transactionService, locationService)
+	transactionRepo := repository.NewTransactionsRepository(db, reportingLoc)
+	transactionService := service.NewTransactionsService(transactionRepo, reportingLoc)
+	transactionHandler := handler.NewTransactionHandler(transactionService, locationService, reportingLoc)
 
 	categoryRepo := repository.NewCategoryRepository(db)
 	categoryService := service.NewCategoryService(categoryRepo)
@@ -138,7 +145,6 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.POST("/:id/prepay", transactionHandler.PrepayTransaction)
 			transactions.PATCH("/:id/end", transactionHandler.EndRecurringTransaction)
 			transactions.POST("/by-categories", transactionHandler.GetTransactionsByCategories)
-			transactions.POST("/by-category/:id", transactionHandler.GetTransactionsByCategory)
 			transactions.POST("/by-date-range", transactionHandler.GetTransactionsByDateRange)
 			transactions.GET("/latest", transactionHandler.GetLatestTransactions)
 			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)

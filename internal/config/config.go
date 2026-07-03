@@ -6,9 +6,16 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Log      LogConfig
+	Server    ServerConfig
+	Database  DatabaseConfig
+	Log       LogConfig
+	Reporting ReportingConfig
+}
+
+type ReportingConfig struct {
+	// Timezone defines the calendar used for all month/day bucketing in
+	// reports (e.g. which month a late-night transaction belongs to).
+	Timezone string
 }
 
 type ServerConfig struct {
@@ -43,6 +50,9 @@ func Load() (*Config, error) {
 		},
 		Log: LogConfig{
 			Level: getEnv("LOG_LEVEL", "info"),
+		},
+		Reporting: ReportingConfig{
+			Timezone: getEnv("REPORTING_TIMEZONE", "America/Sao_Paulo"),
 		},
 	}
 

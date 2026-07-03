@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"log"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/model"
@@ -20,6 +19,12 @@ type RecurringCategoryExpense struct {
 	Amount       float64    `gorm:"column:amount"`
 	StartDate    *time.Time `gorm:"column:start_date"`
 	EndDate      *time.Time `gorm:"column:end_date"`
+}
+
+type RecurringAmount struct {
+	Amount    float64    `gorm:"column:amount"`
+	StartDate *time.Time `gorm:"column:start_date"`
+	EndDate   *time.Time `gorm:"column:end_date"`
 }
 
 type MonthlyTypeTotal struct {
@@ -44,19 +49,18 @@ type TransactionsRepository interface {
 	CountAll() (int64, error)
 	FindAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, error)
 	CountAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (int64, error)
+	SumAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (float64, error)
 	FindBiggest(month, year int) ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
 	Delete(id uint) error
 	FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error)
-	FindByType(transactionType string, limit, offset int) ([]model.Transaction, error)
-	FindRecurring() ([]model.Transaction, error)
 	FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
-	FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error)
-	PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error
 	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
 	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
 	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
+	FindIncomeTotalInRange(startDate, endDate *time.Time) (float64, error)
+	FindRecurringIncomesInRange(startDate, endDate *time.Time) ([]RecurringAmount, error)
 	FindCurrentMonthTotalByType(transactionType string) (float64, error)
 	FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error)
 	FindNonRecurringMonthlyTotalsByType() ([]MonthlyTypeTotal, error)
@@ -64,11 +68,12 @@ type TransactionsRepository interface {
 }
 
 type transactionsRepository struct {
-	db *gorm.DB
+	db  *gorm.DB
+	loc *time.Location
 }
 
-func NewTransactionsRepository(db *gorm.DB) TransactionsRepository {
-	return &transactionsRepository{db: db}
+func NewTransactionsRepository(db *gorm.DB, loc *time.Location) TransactionsRepository {
+	return &transactionsRepository{db: db, loc: loc}
 }
 
 func WithIsPrepaid(db *gorm.DB) *gorm.DB {
@@ -77,6 +82,44 @@ func WithIsPrepaid(db *gorm.DB) *gorm.DB {
 		WHERE t2.prepaid_from_id = transactions.id
 		AND t2.deleted_at IS NULL
 	) AS is_prepaid`)
+}
+
+// monthBounds returns the half-open interval [first instant of the month,
+// first instant of the next month) in the given location.
+func monthBounds(year int, month time.Month, loc *time.Location) (time.Time, time.Time) {
+	start := time.Date(year, month, 1, 0, 0, 0, 0, loc)
+	return start, start.AddDate(0, 1, 0)
+}
+
+// periodCondition returns a WHERE fragment matching transactions active in the
+// half-open interval [start, end): one-off transactions by their timestamp,
+// recurring ones by schedule overlap. A nil bound is unbounded, so a
+// start-only filter also matches recurring schedules that begin in the
+// future. start_date/end_date are DATE columns, so the recurring legs compare
+// against the bound's calendar date in the reporting timezone.
+func (r *transactionsRepository) periodCondition(start, end *time.Time) (string, []interface{}) {
+	nonRecurring := "is_recurring = false AND date IS NOT NULL"
+	args := []interface{}{}
+	if start != nil {
+		nonRecurring += " AND date >= ?"
+		args = append(args, *start)
+	}
+	if end != nil {
+		nonRecurring += " AND date < ?"
+		args = append(args, *end)
+	}
+
+	recurring := "is_recurring = true AND start_date IS NOT NULL"
+	if end != nil {
+		recurring += " AND start_date < ?"
+		args = append(args, end.In(r.loc).Format("2006-01-02"))
+	}
+	if start != nil {
+		recurring += " AND (end_date IS NULL OR end_date >= ?)"
+		args = append(args, start.In(r.loc).Format("2006-01-02"))
+	}
+
+	return "((" + nonRecurring + ") OR (" + recurring + "))", args
 }
 
 func (r *transactionsRepository) Create(transaction *model.Transaction) error {
@@ -117,24 +160,13 @@ func (r *transactionsRepository) buildFilterQuery(currentMonth bool, categoryIDs
 	query := r.db.Model(&model.Transaction{})
 
 	if currentMonth {
-		now := time.Now()
-		startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
-		query = query.Where("(date >= ? AND date <= ?) OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))", startOfMonth, endOfMonth, endOfMonth, startOfMonth)
+		now := time.Now().In(r.loc)
+		start, end := monthBounds(now.Year(), now.Month(), r.loc)
+		cond, args := r.periodCondition(&start, &end)
+		query = query.Where(cond, args...)
 	} else if startDate != nil || endDate != nil {
-		sd := time.Time{}
-		if startDate != nil {
-			sd = *startDate
-		}
-		ed := time.Now()
-		if endDate != nil {
-			ed = *endDate
-		}
-		query = query.Where(
-			"(is_recurring = ? AND date >= ? AND date <= ?) OR (is_recurring = ? AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))",
-			false, sd, ed,
-			true, ed, sd,
-		)
+		cond, args := r.periodCondition(startDate, endDate)
+		query = query.Where(cond, args...)
 	}
 
 	if len(categoryIDs) > 0 {
@@ -165,6 +197,16 @@ func (r *transactionsRepository) CountAllWithFilters(currentMonth bool, category
 	return count, err
 }
 
+func (r *transactionsRepository) SumAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.buildFilterQuery(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType).
+		Select("COALESCE(SUM(amount), 0) as total").
+		Scan(&result).Error
+	return result.Total, err
+}
+
 func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 	var transactions []model.Transaction
 	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where("date IS NOT NULL AND type = ?", model.Expense).Order("date DESC").Limit(3).Find(&transactions).Error
@@ -173,12 +215,13 @@ func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 
 func (r *transactionsRepository) FindBiggest(month, year int) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	startOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
-	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where(
-		"type = ? AND ((is_recurring = false AND date >= ? AND date <= ?) OR (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL)))",
-		model.Expense, startOfMonth, endOfMonth, endOfMonth, startOfMonth,
-	).Order("amount DESC").Limit(3).Find(&transactions).Error
+	start, end := monthBounds(year, time.Month(month), r.loc)
+	cond, args := r.periodCondition(&start, &end)
+	err := r.db.Model(&model.Transaction{}).Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").
+		Where("type = ?", model.Expense).
+		Where("prepaid_from_id IS NULL").
+		Where(cond, args...).
+		Order("amount DESC").Limit(3).Find(&transactions).Error
 	return transactions, err
 }
 
@@ -190,43 +233,13 @@ func (r *transactionsRepository) Delete(id uint) error {
 	return r.db.Delete(&model.Transaction{}, id).Error
 }
 
+// FindByDateRange treats endDate as exclusive; callers convert inclusive
+// calendar days to the half-open form before calling.
 func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error) {
 	var transactions []model.Transaction
-	endOfDay := time.Date(endDate.Year(), endDate.Month(), endDate.Day()+1, 0, 0, 0, 0, endDate.Location())
-	log.Printf("FindByDateRange: startDate=%s endDate=%s endOfDay=%s", startDate.Format(time.RFC3339), endDate.Format(time.RFC3339), endOfDay.Format(time.RFC3339))
-	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where(
-		"(is_recurring = ? AND date >= ? AND date < ?) OR (is_recurring = ? AND start_date < ? AND (end_date >= ? OR end_date IS NULL))",
-		false, startDate, endOfDay,
-		true, endOfDay, startDate,
-	).
-		Order("date DESC").
-		Find(&transactions).Error
-	return transactions, err
-}
-
-func (r *transactionsRepository) FindByType(transactionType string, limit, offset int) ([]model.Transaction, error) {
-	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where("type = ?", transactionType).
-		Limit(limit).
-		Offset(offset).
-		Order("date DESC").
-		Find(&transactions).Error
-	return transactions, err
-}
-
-func (r *transactionsRepository) FindRecurring() ([]model.Transaction, error) {
-	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where("is_recurring = ?", true).
-		Order("start_date DESC").
-		Find(&transactions).Error
-	return transactions, err
-}
-
-func (r *transactionsRepository) FindByCategory(categoryID uint, limit, offset int) ([]model.Transaction, error) {
-	var transactions []model.Transaction
-	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where("category_id = ?", categoryID).
-		Limit(limit).
-		Offset(offset).
+	cond, args := r.periodCondition(&startDate, &endDate)
+	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").
+		Where(cond, args...).
 		Order("date DESC").
 		Find(&transactions).Error
 	return transactions, err
@@ -247,18 +260,6 @@ func (r *transactionsRepository) FindByCategories(categoriesIDs []uint, limit, o
 	return transactions, err
 }
 
-func (r *transactionsRepository) PrepayTransaction(original *model.Transaction, prepayment *model.Transaction) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(original).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(prepayment).Error; err != nil {
-			return err
-		}
-		return nil
-	})
-}
-
 func (r *transactionsRepository) FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error) {
 	var result struct {
 		MinDate *time.Time `gorm:"column:min_date"`
@@ -270,8 +271,8 @@ func (r *transactionsRepository) FindEarliestDate(startDate, endDate *time.Time)
 		args = append(args, *startDate)
 	}
 	if endDate != nil {
-		query += " AND date <= ?"
-		args = append(args, *endDate)
+		query += " AND date < ?"
+		args = append(args, endDate.AddDate(0, 0, 1))
 	}
 	err := r.db.Raw(query, args...).Scan(&result).Error
 	if err != nil {
@@ -292,15 +293,16 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate
 		WHERE t.type = 'expense'
 			AND t.category_id IS NOT NULL
 			AND t.date IS NOT NULL
-			AND t.deleted_at IS NULL`
+			AND t.deleted_at IS NULL
+			AND t.prepaid_from_id IS NULL`
 	args := []interface{}{}
 	if startDate != nil {
 		query += " AND t.date >= ?"
 		args = append(args, *startDate)
 	}
 	if endDate != nil {
-		query += " AND t.date <= ?"
-		args = append(args, *endDate)
+		query += " AND t.date < ?"
+		args = append(args, endDate.AddDate(0, 0, 1))
 	}
 	query += " GROUP BY t.category_id, c.name"
 	err := r.db.Raw(query, args...).Scan(&results).Error
@@ -326,76 +328,115 @@ func (r *transactionsRepository) FindRecurringExpensesInRange(startDate, endDate
 	args := []interface{}{}
 	if endDate != nil {
 		query += " AND t.start_date <= ?"
-		args = append(args, *endDate)
+		args = append(args, endDate.In(r.loc).Format("2006-01-02"))
 	}
 	if startDate != nil {
 		query += " AND (t.end_date IS NULL OR t.end_date >= ?)"
+		args = append(args, startDate.In(r.loc).Format("2006-01-02"))
+	}
+	err := r.db.Raw(query, args...).Scan(&results).Error
+	return results, err
+}
+
+func (r *transactionsRepository) FindIncomeTotalInRange(startDate, endDate *time.Time) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	query := `
+		SELECT COALESCE(SUM(amount), 0) as total
+		FROM transactions
+		WHERE type = 'income'
+		  AND is_recurring = false
+		  AND date IS NOT NULL
+		  AND deleted_at IS NULL
+		  AND prepaid_from_id IS NULL`
+	args := []interface{}{}
+	if startDate != nil {
+		query += " AND date >= ?"
 		args = append(args, *startDate)
+	}
+	if endDate != nil {
+		query += " AND date < ?"
+		args = append(args, endDate.AddDate(0, 0, 1))
+	}
+	err := r.db.Raw(query, args...).Scan(&result).Error
+	return result.Total, err
+}
+
+func (r *transactionsRepository) FindRecurringIncomesInRange(startDate, endDate *time.Time) ([]RecurringAmount, error) {
+	var results []RecurringAmount
+	query := `
+		SELECT amount, start_date, end_date
+		FROM transactions
+		WHERE type = 'income'
+		  AND is_recurring = true
+		  AND start_date IS NOT NULL
+		  AND deleted_at IS NULL`
+	args := []interface{}{}
+	if endDate != nil {
+		query += " AND start_date <= ?"
+		args = append(args, endDate.In(r.loc).Format("2006-01-02"))
+	}
+	if startDate != nil {
+		query += " AND (end_date IS NULL OR end_date >= ?)"
+		args = append(args, startDate.In(r.loc).Format("2006-01-02"))
 	}
 	err := r.db.Raw(query, args...).Scan(&results).Error
 	return results, err
 }
 
 func (r *transactionsRepository) FindCurrentMonthTotalByType(transactionType string) (float64, error) {
-	now := time.Now()
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
+	now := time.Now().In(r.loc)
+	start, end := monthBounds(now.Year(), now.Month(), r.loc)
+	cond, args := r.periodCondition(&start, &end)
 
 	var result struct {
 		Total float64 `gorm:"column:total"`
 	}
-	err := r.db.Raw(`
-		SELECT COALESCE(SUM(amount), 0) as total
-		FROM transactions
-		WHERE type = ?
-		  AND deleted_at IS NULL
-		  AND (
-		    (is_recurring = false AND date >= ? AND date <= ?)
-		    OR
-		    (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))
-		  )
-	`, transactionType, startOfMonth, endOfMonth, endOfMonth, startOfMonth).Scan(&result).Error
+	err := r.db.Model(&model.Transaction{}).
+		Select("COALESCE(SUM(amount), 0) as total").
+		Where("type = ?", transactionType).
+		Where("prepaid_from_id IS NULL").
+		Where(cond, args...).
+		Scan(&result).Error
 
 	return result.Total, err
 }
 
 func (r *transactionsRepository) FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error) {
-	now := time.Now()
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Second)
+	now := time.Now().In(r.loc)
+	start, end := monthBounds(now.Year(), now.Month(), r.loc)
+	cond, args := r.periodCondition(&start, &end)
 
 	var result struct {
 		Total float64 `gorm:"column:total"`
 	}
-	err := r.db.Raw(`
-		SELECT COALESCE(SUM(amount), 0) as total
-		FROM transactions
-		WHERE type = ?
-		  AND category_id = ?
-		  AND deleted_at IS NULL
-		  AND (
-		    (is_recurring = false AND date >= ? AND date <= ?)
-		    OR
-		    (is_recurring = true AND start_date <= ? AND (end_date >= ? OR end_date IS NULL))
-		  )
-	`, transactionType, categoryID, startOfMonth, endOfMonth, endOfMonth, startOfMonth).Scan(&result).Error
+	err := r.db.Model(&model.Transaction{}).
+		Select("COALESCE(SUM(amount), 0) as total").
+		Where("type = ?", transactionType).
+		Where("category_id = ?", categoryID).
+		Where("prepaid_from_id IS NULL").
+		Where(cond, args...).
+		Scan(&result).Error
 
 	return result.Total, err
 }
 
 func (r *transactionsRepository) FindNonRecurringMonthlyTotalsByType() ([]MonthlyTypeTotal, error) {
 	var results []MonthlyTypeTotal
+	tz := r.loc.String()
 	err := r.db.Raw(`
 		SELECT type,
-		       EXTRACT(year FROM date)::int  AS year,
-		       EXTRACT(month FROM date)::int AS month,
-		       SUM(amount)                   AS monthly_sum
+		       EXTRACT(year FROM (date AT TIME ZONE ?))::int  AS year,
+		       EXTRACT(month FROM (date AT TIME ZONE ?))::int AS month,
+		       SUM(amount)                                    AS monthly_sum
 		FROM transactions
 		WHERE is_recurring = false
 		  AND date IS NOT NULL
 		  AND deleted_at IS NULL
+		  AND prepaid_from_id IS NULL
 		GROUP BY type, year, month
-	`).Scan(&results).Error
+	`, tz, tz).Scan(&results).Error
 	return results, err
 }
 
