@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/ArthurWerle/transactions/internal/model"
 	"github.com/ArthurWerle/transactions/internal/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type CategoryHandler struct {
@@ -42,6 +44,12 @@ func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 	}
 
 	if err := h.categoryService.CreateCategory(c.Request.Context(), category); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "A category with this name already exists",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to create category",
 			"details": err.Error(),
@@ -78,7 +86,8 @@ func (h *CategoryHandler) GetCategoryByID(c *gin.Context) {
 }
 
 func (h *CategoryHandler) GetCategories(c *gin.Context) {
-	categories, err := h.categoryService.GetCategories(c.Request.Context())
+	includeDeleted := c.Query("include_deleted") == "true"
+	categories, err := h.categoryService.GetCategories(c.Request.Context(), includeDeleted)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to fetch categories",
@@ -138,6 +147,12 @@ func (h *CategoryHandler) UpdateCategory(c *gin.Context) {
 	}
 
 	if err := h.categoryService.UpdateCategory(c.Request.Context(), category); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "A category with this name already exists",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to update category",
 			"details": err.Error(),

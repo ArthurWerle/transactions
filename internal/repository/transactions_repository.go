@@ -321,7 +321,7 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate
 	query := `
 		SELECT
 			t.category_id,
-			c.name as category_name,
+			CASE WHEN c.deleted_at IS NOT NULL THEN c.name || ' (deleted)' ELSE c.name END as category_name,
 			SUM(t.amount) as total_spent
 		FROM transactions t
 		LEFT JOIN categories c ON c.id = t.category_id
@@ -339,7 +339,7 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate
 		query += " AND t.date < ?"
 		args = append(args, endDate.AddDate(0, 0, 1))
 	}
-	query += " GROUP BY t.category_id, c.name"
+	query += " GROUP BY t.category_id, c.name, c.deleted_at"
 	err := r.db.Raw(query, args...).Scan(&results).Error
 	return results, err
 }
@@ -349,7 +349,7 @@ func (r *transactionsRepository) FindRecurringExpensesInRange(startDate, endDate
 	query := `
 		SELECT
 			t.category_id,
-			c.name as category_name,
+			CASE WHEN c.deleted_at IS NOT NULL THEN c.name || ' (deleted)' ELSE c.name END as category_name,
 			t.amount,
 			t.start_date,
 			t.end_date

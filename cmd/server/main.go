@@ -14,7 +14,6 @@ import (
 	"github.com/ArthurWerle/transactions/internal/config"
 	"github.com/ArthurWerle/transactions/internal/handler"
 	"github.com/ArthurWerle/transactions/internal/migrations"
-	"github.com/ArthurWerle/transactions/internal/model"
 	"github.com/ArthurWerle/transactions/internal/repository"
 	"github.com/ArthurWerle/transactions/internal/service"
 	"github.com/gin-contrib/cors"
@@ -39,19 +38,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Run SQL migrations
+	// The versioned SQL migrations are the only schema owner.
 	if err := migrations.RunMigrations(db, logger); err != nil {
 		logger.Error("failed to run migrations", "error", err)
-		os.Exit(1)
-	}
-
-	if err := db.AutoMigrate(
-		&model.Transaction{},
-		&model.Category{},
-		&model.Subcategory{},
-		&model.Location{},
-	); err != nil {
-		logger.Error("failed to auto migrate", "error", err)
 		os.Exit(1)
 	}
 
@@ -216,6 +205,9 @@ func setupDatabase(cfg *config.Config, logger *slog.Logger) (*gorm.DB, error) {
 
 	gormCfg := &gorm.Config{
 		Logger: gormLogger.Default.LogMode(gormLogLevel),
+		// Translate driver errors (e.g. unique violations) into gorm.Err*
+		// sentinels so handlers can map them to proper HTTP statuses.
+		TranslateError: true,
 	}
 
 	db, err := gorm.Open(postgres.Open(cfg.Database.DSN()), gormCfg)

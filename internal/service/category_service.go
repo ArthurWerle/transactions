@@ -10,7 +10,7 @@ import (
 type CategoryService interface {
 	CreateCategory(ctx context.Context, category *model.Category) error
 	GetCategoryByID(ctx context.Context, id uint) (*model.Category, error)
-	GetCategories(ctx context.Context) ([]model.Category, error)
+	GetCategories(ctx context.Context, includeDeleted bool) ([]model.Category, error)
 	UpdateCategory(ctx context.Context, category *model.Category) error
 	DeleteCategory(ctx context.Context, id uint) error
 }
@@ -33,8 +33,8 @@ func (s *categoryService) GetCategoryByID(ctx context.Context, id uint) (*model.
 	return s.categoryRepo.FindByID(id)
 }
 
-func (s *categoryService) GetCategories(ctx context.Context) ([]model.Category, error) {
-	return s.categoryRepo.FindAll()
+func (s *categoryService) GetCategories(ctx context.Context, includeDeleted bool) ([]model.Category, error) {
+	return s.categoryRepo.FindAll(includeDeleted)
 }
 
 func (s *categoryService) UpdateCategory(ctx context.Context, category *model.Category) error {
