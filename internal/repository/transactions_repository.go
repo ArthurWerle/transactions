@@ -41,6 +41,26 @@ type RecurringTypeTransaction struct {
 	EndDate   *time.Time `gorm:"column:end_date"`
 }
 
+type MonthlyFlowRow struct {
+	Month   time.Time `gorm:"column:month"`
+	Income  float64   `gorm:"column:income"`
+	Expense float64   `gorm:"column:expense"`
+}
+
+type CategoryMonthlyFlowRow struct {
+	Month        time.Time `gorm:"column:month"`
+	CategoryID   uint      `gorm:"column:category_id"`
+	CategoryName string    `gorm:"column:category_name"`
+	Color        string    `gorm:"column:color"`
+	Income       float64   `gorm:"column:income"`
+	Expense      float64   `gorm:"column:expense"`
+}
+
+type CategoryMonthTotal struct {
+	CategoryName string  `gorm:"column:category_name"`
+	Total        float64 `gorm:"column:total"`
+}
+
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
@@ -54,7 +74,9 @@ type TransactionsRepository interface {
 	Update(transaction *model.Transaction) error
 	Delete(id uint) error
 	FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error)
-	FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
+	FindMonthlyFlow(startMonth, endMonth time.Time) ([]MonthlyFlowRow, error)
+	FindCategoryMonthlyFlow(startMonth, endMonth time.Time, categoryIDs []uint) ([]CategoryMonthlyFlowRow, error)
+	FindCategoryExpenseTotalsForMonth(month time.Time) ([]CategoryMonthTotal, error)
 	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
 	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
 	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
@@ -280,19 +302,126 @@ func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) (
 	return transactions, err
 }
 
-func (r *transactionsRepository) FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error) {
-	var transactions []model.Transaction
+// FindMonthlyFlow returns income/expense totals for every calendar month in
+// [startMonth, endMonth] (inclusive, zero-filled) in one query: one-offs are
+// bucketed by their reporting-timezone month, recurring schedules contribute
+// their amount to each month they are active in. Prepayment rows are cash
+// records excluded from aggregates (consumption basis).
+func (r *transactionsRepository) FindMonthlyFlow(startMonth, endMonth time.Time) ([]MonthlyFlowRow, error) {
+	var results []MonthlyFlowRow
+	tz := r.loc.String()
+	err := r.db.Raw(`
+		WITH months AS (
+			SELECT generate_series(?::date, ?::date, interval '1 month')::date AS month
+		),
+		activity AS (
+			SELECT date_trunc('month', date AT TIME ZONE ?)::date AS month, type, amount
+			FROM transactions
+			WHERE is_recurring = false
+			  AND date IS NOT NULL
+			  AND deleted_at IS NULL
+			  AND prepaid_from_id IS NULL
+			UNION ALL
+			SELECT m.month, t.type, t.amount
+			FROM months m
+			JOIN transactions t ON t.is_recurring = true
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (m.month + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= m.month)
+		)
+		SELECT m.month,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'income'), 0)  AS income,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'expense'), 0) AS expense
+		FROM months m
+		LEFT JOIN activity a ON a.month = m.month
+		GROUP BY m.month
+		ORDER BY m.month
+	`, startMonth.Format("2006-01-02"), endMonth.Format("2006-01-02"), tz).Scan(&results).Error
+	return results, err
+}
 
-	if len(categoriesIDs) == 0 {
-		return transactions, nil
+// FindCategoryMonthlyFlow returns per-category income/expense totals for each
+// month in [startMonth, endMonth] where the category had activity, in one
+// query. Soft-deleted categories stay visible, labeled.
+func (r *transactionsRepository) FindCategoryMonthlyFlow(startMonth, endMonth time.Time, categoryIDs []uint) ([]CategoryMonthlyFlowRow, error) {
+	var results []CategoryMonthlyFlowRow
+	tz := r.loc.String()
+
+	query := `
+		WITH months AS (
+			SELECT generate_series(?::date, ?::date, interval '1 month')::date AS month
+		),
+		activity AS (
+			SELECT date_trunc('month', t.date AT TIME ZONE ?)::date AS month, t.category_id, t.type, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = false
+			  AND t.date IS NOT NULL
+			  AND t.deleted_at IS NULL
+			  AND t.prepaid_from_id IS NULL
+			  AND t.date >= (SELECT min(month) FROM months)
+			  AND t.date < ((SELECT max(month) FROM months) + interval '1 month')
+			UNION ALL
+			SELECT m.month, t.category_id, t.type, t.amount
+			FROM months m
+			JOIN transactions t ON t.is_recurring = true
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (m.month + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= m.month)
+		)
+		SELECT a.month,
+		       a.category_id,
+		       CASE WHEN c.deleted_at IS NOT NULL THEN c.name || ' (deleted)' ELSE c.name END AS category_name,
+		       COALESCE(c.color, '') AS color,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'income'), 0)  AS income,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'expense'), 0) AS expense
+		FROM activity a
+		JOIN categories c ON c.id = a.category_id`
+	args := []interface{}{startMonth.Format("2006-01-02"), endMonth.Format("2006-01-02"), tz}
+	if len(categoryIDs) > 0 {
+		query += " WHERE a.category_id IN ?"
+		args = append(args, categoryIDs)
 	}
+	query += `
+		GROUP BY a.month, a.category_id, c.name, c.deleted_at, c.color
+		ORDER BY category_name, a.month`
 
-	err := r.db.Scopes(WithIsPrepaid).Preload("Subcategory").Preload("Location").Where("category_id in ?", categoriesIDs).
-		Limit(limit).
-		Offset(offset).
-		Order("date DESC").
-		Find(&transactions).Error
-	return transactions, err
+	err := r.db.Raw(query, args...).Scan(&results).Error
+	return results, err
+}
+
+// FindCategoryExpenseTotalsForMonth returns each category's expense total for
+// one calendar month, largest first, with soft-deleted categories labeled.
+func (r *transactionsRepository) FindCategoryExpenseTotalsForMonth(month time.Time) ([]CategoryMonthTotal, error) {
+	var results []CategoryMonthTotal
+	tz := r.loc.String()
+	monthStr := month.Format("2006-01-02")
+	err := r.db.Raw(`
+		WITH activity AS (
+			SELECT t.category_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = false
+			  AND t.type = 'expense'
+			  AND t.date IS NOT NULL
+			  AND t.deleted_at IS NULL
+			  AND t.prepaid_from_id IS NULL
+			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
+			UNION ALL
+			SELECT t.category_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = true
+			  AND t.type = 'expense'
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (?::date + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
+		)
+		SELECT CASE WHEN c.deleted_at IS NOT NULL THEN c.name || ' (deleted)' ELSE c.name END AS category_name,
+		       SUM(a.amount) AS total
+		FROM activity a
+		JOIN categories c ON c.id = a.category_id
+		GROUP BY c.name, c.deleted_at
+		ORDER BY total DESC
+	`, tz, monthStr, monthStr, monthStr).Scan(&results).Error
+	return results, err
 }
 
 func (r *transactionsRepository) FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error) {

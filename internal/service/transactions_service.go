@@ -52,7 +52,10 @@ type TransactionsService interface {
 	UpdateTransaction(ctx context.Context, transaction *model.Transaction) error
 	DeleteTransaction(ctx context.Context, id uint) error
 	GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error)
-	GetTransactionsByCategories(ctx context.Context, categoriesIDs []uint, limit, offset int) ([]model.Transaction, error)
+	GetMonthlyHistory(ctx context.Context, startDate, endDate time.Time) ([]MonthlyFlowPoint, error)
+	GetCategoryHistory(ctx context.Context, startDate, endDate time.Time, categoryIDs []uint) ([]CategoryHistorySeries, error)
+	GetMonthOverview(ctx context.Context, month, year int) (*MonthOverview, error)
+	GetMonthlyExpensesByCategory(ctx context.Context, month, year int) ([]CategoryMonthExpense, error)
 	PrepayTransaction(ctx context.Context, id uint) (*PrepayResult, error)
 	GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error)
 }
@@ -75,6 +78,12 @@ func NewTransactionsService(transactionRepo repository.TransactionsRepository, l
 func validateTransactionShape(t *model.Transaction) error {
 	if t.CategoryID == 0 {
 		return invalidf("category_id is required")
+	}
+	if t.Amount <= 0 {
+		return invalidf("amount must be greater than 0")
+	}
+	if t.Type != string(model.Income) && t.Type != string(model.Expense) {
+		return invalidf("type must be either 'income' or 'expense'")
 	}
 	if t.IsRecurring {
 		if t.StartDate == nil {
@@ -169,8 +178,8 @@ func (s *transactionsService) DeleteTransaction(ctx context.Context, id uint) er
 }
 
 type AverageType struct {
-	TypeName string
-	Average  float64
+	TypeName string  `json:"type_name"`
+	Average  float64 `json:"average"`
 }
 
 type AverageByCategory struct {
@@ -185,6 +194,60 @@ type AverageByCategory struct {
 // "now" values, convert to the reporting location before calling.
 func MonthStart(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// ComputeTotalPaid returns how much of a recurring schedule has been paid so
+// far. The current month counts as paid — the same convention prepay uses —
+// so ComputeTotalPaid + ComputeTotalLeft always covers the whole schedule.
+func ComputeTotalPaid(tx *model.Transaction, now time.Time) *float64 {
+	if !tx.IsRecurring || tx.StartDate == nil {
+		return nil
+	}
+
+	startMonth := MonthStart(*tx.StartDate)
+	currentMonth := MonthStart(now)
+	if startMonth.After(currentMonth) {
+		zero := 0.0
+		return &zero
+	}
+
+	effectiveEnd := currentMonth
+	if tx.EndDate != nil {
+		if e := MonthStart(*tx.EndDate); e.Before(effectiveEnd) {
+			effectiveEnd = e
+		}
+	}
+
+	total := tx.Amount * float64(InclusiveMonthCount(startMonth, effectiveEnd))
+	return &total
+}
+
+func ComputeTotalLeft(tx *model.Transaction, now time.Time) *float64 {
+	if !tx.IsRecurring || tx.StartDate == nil || tx.EndDate == nil {
+		return nil
+	}
+
+	startMonth := MonthStart(*tx.StartDate)
+	endMonth := MonthStart(*tx.EndDate)
+	currentMonth := MonthStart(now)
+
+	if endMonth.Before(startMonth) {
+		zero := 0.0
+		return &zero
+	}
+
+	totalMonths := InclusiveMonthCount(startMonth, endMonth)
+	paidMonths := 0
+	if !startMonth.After(currentMonth) {
+		effectiveEnd := currentMonth
+		if endMonth.Before(effectiveEnd) {
+			effectiveEnd = endMonth
+		}
+		paidMonths = InclusiveMonthCount(startMonth, effectiveEnd)
+	}
+
+	left := tx.Amount * float64(totalMonths-paidMonths)
+	return &left
 }
 
 // GetAverageByType computes each type's monthly average over that type's own
@@ -486,8 +549,153 @@ func (s *transactionsService) GetTransactionsByDateRange(ctx context.Context, st
 	return s.transactionRepo.FindByDateRange(startDate, endDate)
 }
 
-func (s *transactionsService) GetTransactionsByCategories(ctx context.Context, categoriesIDs []uint, limit, offset int) ([]model.Transaction, error) {
-	return s.transactionRepo.FindByCategories(categoriesIDs, limit, offset)
+type MonthlyFlowPoint struct {
+	Month   string  `json:"month"`
+	Income  float64 `json:"income"`
+	Expense float64 `json:"expense"`
+	Balance float64 `json:"balance"`
+}
+
+// monthLabel matches the label format charts have always consumed ("Jul 26").
+func monthLabel(m time.Time) string {
+	return m.Format("Jan 06")
+}
+
+// GetMonthlyHistory returns the income/expense/balance series for every
+// calendar month between the two dates, zero-filled, in one query (A1 — this
+// used to be one backend round-trip per month in the BFF).
+func (s *transactionsService) GetMonthlyHistory(ctx context.Context, startDate, endDate time.Time) ([]MonthlyFlowPoint, error) {
+	rows, err := s.transactionRepo.FindMonthlyFlow(MonthStart(startDate.In(s.loc)), MonthStart(endDate.In(s.loc)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch monthly flow: %w", err)
+	}
+
+	points := make([]MonthlyFlowPoint, 0, len(rows))
+	for _, row := range rows {
+		points = append(points, MonthlyFlowPoint{
+			Month:   monthLabel(row.Month),
+			Income:  row.Income,
+			Expense: row.Expense,
+			Balance: row.Income - row.Expense,
+		})
+	}
+	return points, nil
+}
+
+type CategoryHistoryPoint struct {
+	Month   string  `json:"month"`
+	Expense float64 `json:"expense"`
+	Income  float64 `json:"income"`
+}
+
+type CategoryHistorySeries struct {
+	CategoryID   uint                   `json:"category_id"`
+	CategoryName string                 `json:"category_name"`
+	Color        string                 `json:"color"`
+	Data         []CategoryHistoryPoint `json:"data"`
+}
+
+// GetCategoryHistory returns per-category monthly series over the range,
+// including only months where the category had activity (the shape charts
+// consume). An empty categoryIDs slice means all categories.
+func (s *transactionsService) GetCategoryHistory(ctx context.Context, startDate, endDate time.Time, categoryIDs []uint) ([]CategoryHistorySeries, error) {
+	rows, err := s.transactionRepo.FindCategoryMonthlyFlow(MonthStart(startDate.In(s.loc)), MonthStart(endDate.In(s.loc)), categoryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch category monthly flow: %w", err)
+	}
+
+	var series []CategoryHistorySeries
+	index := make(map[uint]int)
+	for _, row := range rows {
+		if row.Income == 0 && row.Expense == 0 {
+			continue
+		}
+		i, ok := index[row.CategoryID]
+		if !ok {
+			series = append(series, CategoryHistorySeries{
+				CategoryID:   row.CategoryID,
+				CategoryName: row.CategoryName,
+				Color:        row.Color,
+			})
+			i = len(series) - 1
+			index[row.CategoryID] = i
+		}
+		series[i].Data = append(series[i].Data, CategoryHistoryPoint{
+			Month:   monthLabel(row.Month),
+			Expense: row.Expense,
+			Income:  row.Income,
+		})
+	}
+	return series, nil
+}
+
+type MonthOverviewSide struct {
+	CurrentMonth        float64  `json:"currentMonth"`
+	LastMonth           float64  `json:"lastMonth"`
+	PercentageVariation *float64 `json:"percentageVariation"`
+}
+
+type MonthOverview struct {
+	Income  MonthOverviewSide `json:"income"`
+	Expense MonthOverviewSide `json:"expense"`
+}
+
+// GetMonthOverview compares a month's income/expense with the previous
+// month's in a single query.
+func (s *transactionsService) GetMonthOverview(ctx context.Context, month, year int) (*MonthOverview, error) {
+	target := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, s.loc)
+	previous := target.AddDate(0, -1, 0)
+
+	rows, err := s.transactionRepo.FindMonthlyFlow(previous, target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch monthly flow: %w", err)
+	}
+	if len(rows) != 2 {
+		return nil, fmt.Errorf("expected 2 months of flow data, got %d", len(rows))
+	}
+
+	variation := func(current, last float64) *float64 {
+		if last == 0 {
+			return nil
+		}
+		v := (current - last) / last * 100
+		return &v
+	}
+
+	last, current := rows[0], rows[1]
+	return &MonthOverview{
+		Income: MonthOverviewSide{
+			CurrentMonth:        current.Income,
+			LastMonth:           last.Income,
+			PercentageVariation: variation(current.Income, last.Income),
+		},
+		Expense: MonthOverviewSide{
+			CurrentMonth:        current.Expense,
+			LastMonth:           last.Expense,
+			PercentageVariation: variation(current.Expense, last.Expense),
+		},
+	}, nil
+}
+
+type CategoryMonthExpense struct {
+	CategoryName string  `json:"category_name"`
+	Total        float64 `json:"total"`
+}
+
+// GetMonthlyExpensesByCategory returns each category's expense total for the
+// month, largest first.
+func (s *transactionsService) GetMonthlyExpensesByCategory(ctx context.Context, month, year int) ([]CategoryMonthExpense, error) {
+	target := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, s.loc)
+	rows, err := s.transactionRepo.FindCategoryExpenseTotalsForMonth(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch category totals: %w", err)
+	}
+
+	result := make([]CategoryMonthExpense, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, CategoryMonthExpense{CategoryName: row.CategoryName, Total: row.Total})
+	}
+	return result, nil
 }
 
 // PrepayTransaction records the remaining installments of a recurring
