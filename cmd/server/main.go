@@ -138,7 +138,6 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)
 			transactions.GET("/average/by-type", transactionHandler.GetAverageByType)
 			transactions.GET("/average/by-category", transactionHandler.GetAverageByCategory)
-			transactions.GET("/projections/current-month", transactionHandler.GetCurrentMonthProjection)
 
 			reports := transactions.Group("/reports")
 			{
