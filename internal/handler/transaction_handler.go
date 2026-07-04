@@ -811,18 +811,6 @@ func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 	})
 }
 
-func (h *TransactionHandler) GetCurrentMonthProjection(c *gin.Context) {
-	projection, err := h.transactionService.GetCurrentMonthProjection(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to compute month projection",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, projection)
-}
 
 func (h *TransactionHandler) GetAverageByCategory(c *gin.Context) {
 	var startDate, endDate *time.Time

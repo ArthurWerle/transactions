@@ -43,7 +43,6 @@ type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
 	GetAverageByType(ctx context.Context, windowMonths int) ([]AverageType, error)
 	GetAverageByCategory(ctx context.Context, startDate, endDate *time.Time) ([]AverageByCategory, float64, error)
-	GetCurrentMonthProjection(ctx context.Context) (*MonthProjection, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
 	GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, error)
 	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, error)
@@ -503,46 +502,6 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 	}
 
 	return result, incomeTotal, nil
-}
-
-type MonthProjection struct {
-	Month              string  `json:"month"`
-	RecurringCommitted float64 `json:"recurring_committed"`
-	OneOffSpent        float64 `json:"one_off_spent"`
-	ProjectedOneOff    float64 `json:"projected_one_off"`
-	ProjectedTotal     float64 `json:"projected_total"`
-}
-
-// projectMonth extrapolates end-of-month spending: recurring commitments are
-// fixed, one-off spending continues at the month-to-date daily run rate.
-func projectMonth(now time.Time, recurringCommitted, oneOffSpent float64) *MonthProjection {
-	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
-	elapsedDays := now.Day()
-
-	projectedOneOff := oneOffSpent / float64(elapsedDays) * float64(daysInMonth)
-
-	return &MonthProjection{
-		Month:              now.Format("2006-01"),
-		RecurringCommitted: recurringCommitted,
-		OneOffSpent:        oneOffSpent,
-		ProjectedOneOff:    projectedOneOff,
-		ProjectedTotal:     recurringCommitted + projectedOneOff,
-	}
-}
-
-// GetCurrentMonthProjection estimates where this month's expenses will land
-// (M6): the recurring commitments already known plus one-off spending
-// extrapolated from the month-to-date run rate.
-func (s *transactionsService) GetCurrentMonthProjection(ctx context.Context) (*MonthProjection, error) {
-	recurring, err := s.transactionRepo.FindCurrentMonthRecurringExpenseTotal()
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch recurring expense total: %w", err)
-	}
-	oneOff, err := s.transactionRepo.FindMonthToDateOneOffExpenseTotal()
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch month-to-date expense total: %w", err)
-	}
-	return projectMonth(time.Now().In(s.loc), recurring, oneOff), nil
 }
 
 func (s *transactionsService) GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error) {

@@ -82,8 +82,6 @@ type TransactionsRepository interface {
 	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
 	FindIncomeTotalInRange(startDate, endDate *time.Time) (float64, error)
 	FindRecurringIncomesInRange(startDate, endDate *time.Time) ([]RecurringAmount, error)
-	FindCurrentMonthRecurringExpenseTotal() (float64, error)
-	FindMonthToDateOneOffExpenseTotal() (float64, error)
 	FindCurrentMonthTotalByType(transactionType string) (float64, error)
 	FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error)
 	FindNonRecurringMonthlyTotalsByType() ([]MonthlyTypeTotal, error)
@@ -220,49 +218,6 @@ func (r *transactionsRepository) CountAllWithFilters(currentMonth bool, category
 	return count, err
 }
 
-// FindCurrentMonthRecurringExpenseTotal sums the monthly amounts of every
-// recurring expense schedule active in the current month.
-func (r *transactionsRepository) FindCurrentMonthRecurringExpenseTotal() (float64, error) {
-	now := time.Now().In(r.loc)
-	start, end := monthBounds(now.Year(), now.Month(), r.loc)
-
-	var result struct {
-		Total float64 `gorm:"column:total"`
-	}
-	err := r.db.Raw(`
-		SELECT COALESCE(SUM(amount), 0) as total
-		FROM transactions
-		WHERE type = 'expense'
-		  AND is_recurring = true
-		  AND deleted_at IS NULL
-		  AND start_date < ?
-		  AND (end_date IS NULL OR end_date >= ?)
-	`, end.Format("2006-01-02"), start.Format("2006-01-02")).Scan(&result).Error
-	return result.Total, err
-}
-
-// FindMonthToDateOneOffExpenseTotal sums one-off expenses from the start of
-// the current month through the end of today (prepay lumps excluded).
-func (r *transactionsRepository) FindMonthToDateOneOffExpenseTotal() (float64, error) {
-	now := time.Now().In(r.loc)
-	start, _ := monthBounds(now.Year(), now.Month(), r.loc)
-	endOfToday := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, r.loc)
-
-	var result struct {
-		Total float64 `gorm:"column:total"`
-	}
-	err := r.db.Raw(`
-		SELECT COALESCE(SUM(amount), 0) as total
-		FROM transactions
-		WHERE type = 'expense'
-		  AND is_recurring = false
-		  AND prepaid_from_id IS NULL
-		  AND deleted_at IS NULL
-		  AND date >= ?
-		  AND date < ?
-	`, start, endOfToday).Scan(&result).Error
-	return result.Total, err
-}
 
 func (r *transactionsRepository) FindLatest() ([]model.Transaction, error) {
 	var transactions []model.Transaction

@@ -22,8 +22,6 @@ type mockTransactionsRepository struct {
 	recurringByType     []repository.RecurringTypeTransaction
 	incomeTotal         float64
 	recurringIncomes    []repository.RecurringAmount
-	recurringMonthly    float64
-	oneOffMonthToDate   float64
 	monthlyFlow         []repository.MonthlyFlowRow
 	categoryFlow        []repository.CategoryMonthlyFlowRow
 	categoryMonthTotals []repository.CategoryMonthTotal
@@ -66,14 +64,6 @@ func (m *mockTransactionsRepository) FindAllWithFilters(currentMonth bool, categ
 
 func (m *mockTransactionsRepository) CountAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (int64, error) {
 	return 0, nil
-}
-
-func (m *mockTransactionsRepository) FindCurrentMonthRecurringExpenseTotal() (float64, error) {
-	return m.recurringMonthly, nil
-}
-
-func (m *mockTransactionsRepository) FindMonthToDateOneOffExpenseTotal() (float64, error) {
-	return m.oneOffMonthToDate, nil
 }
 
 func (m *mockTransactionsRepository) FindBiggest(month, year int) ([]model.Transaction, error) {
@@ -580,44 +570,6 @@ func TestGetAverageByType_WindowClipsRecurringStart(t *testing.T) {
 	}
 	if math.Abs(result[0].Average-100) > 0.001 {
 		t.Errorf("expected average 100 over the window, got %v", result[0].Average)
-	}
-}
-
-// ---- projectMonth tests ----
-
-func TestProjectMonth(t *testing.T) {
-	// July 10th: R$500 one-off spent in 10 of 31 days → R$1,550 projected
-	// one-offs; plus R$800 in recurring commitments.
-	now := time.Date(2026, 7, 10, 15, 0, 0, 0, time.UTC)
-	p := projectMonth(now, 800, 500)
-
-	if p.Month != "2026-07" {
-		t.Errorf("expected month 2026-07, got %s", p.Month)
-	}
-	if p.RecurringCommitted != 800 {
-		t.Errorf("expected recurring 800, got %v", p.RecurringCommitted)
-	}
-	if p.OneOffSpent != 500 {
-		t.Errorf("expected one-off spent 500, got %v", p.OneOffSpent)
-	}
-	if math.Abs(p.ProjectedOneOff-1550) > 0.001 {
-		t.Errorf("expected projected one-off 1550, got %v", p.ProjectedOneOff)
-	}
-	if math.Abs(p.ProjectedTotal-2350) > 0.001 {
-		t.Errorf("expected projected total 2350, got %v", p.ProjectedTotal)
-	}
-}
-
-func TestProjectMonth_LastDayEqualsActuals(t *testing.T) {
-	// On the last day of the month the projection is just what was spent.
-	now := time.Date(2026, 6, 30, 23, 0, 0, 0, time.UTC)
-	p := projectMonth(now, 200, 900)
-
-	if math.Abs(p.ProjectedOneOff-900) > 0.001 {
-		t.Errorf("expected projected one-off 900, got %v", p.ProjectedOneOff)
-	}
-	if math.Abs(p.ProjectedTotal-1100) > 0.001 {
-		t.Errorf("expected projected total 1100, got %v", p.ProjectedTotal)
 	}
 }
 
