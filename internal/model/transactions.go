@@ -11,7 +11,7 @@ type Transaction struct {
 	MigratedID    *uint          `gorm:"column:migrated_id" json:"migrated_id"`
 	CreatedById   uint           `gorm:"column:created_by_id" json:"created_by_id"`
 	IsRecurring   bool           `gorm:"not null;default:false" json:"is_recurring"`
-	CategoryID    *uint          `gorm:"column:category_id" json:"category_id"`
+	CategoryID    uint           `gorm:"column:category_id;not null" json:"category_id"`
 	SubcategoryID *uint          `gorm:"column:subcategory_id" json:"subcategory_id"`
 	Subcategory   *Subcategory   `gorm:"foreignKey:SubcategoryID" json:"subcategory,omitempty"`
 	LocationID    *uint          `gorm:"column:location_id" json:"location_id"`

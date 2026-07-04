@@ -14,6 +14,11 @@ import (
 // MonthlyFrequency is the only supported recurrence frequency.
 const MonthlyFrequency = "monthly"
 
+// DefaultAverageWindowMonths is the trailing window used for monthly
+// averages when the caller doesn't specify one. All-time averages converge
+// to a flat line and stop reflecting current behavior.
+const DefaultAverageWindowMonths = 6
+
 // ErrInvalidTransaction is the sentinel wrapped by every transaction-shape
 // validation error, so handlers can map them to 400 with errors.Is.
 var ErrInvalidTransaction = errors.New("invalid transaction")
@@ -36,11 +41,12 @@ type TransactionPercentages struct {
 
 type TransactionsService interface {
 	CreateTransaction(ctx context.Context, transaction *model.Transaction) error
-	GetAverageByType(ctx context.Context) ([]AverageType, error)
+	GetAverageByType(ctx context.Context, windowMonths int) ([]AverageType, error)
 	GetAverageByCategory(ctx context.Context, startDate, endDate *time.Time) ([]AverageByCategory, float64, error)
+	GetCurrentMonthProjection(ctx context.Context) (*MonthProjection, error)
 	GetTransactionByID(ctx context.Context, id uint) (*model.Transaction, error)
-	GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, float64, error)
-	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, float64, error)
+	GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, error)
+	GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, error)
 	GetLatestTransactions(ctx context.Context) ([]model.Transaction, error)
 	GetBiggestTransactions(ctx context.Context, month, year int) ([]model.Transaction, error)
 	UpdateTransaction(ctx context.Context, transaction *model.Transaction) error
@@ -67,6 +73,9 @@ func NewTransactionsService(transactionRepo repository.TransactionsRepository, l
 // recurring rows are schedules (start_date set, no date, monthly frequency),
 // one-offs are dated rows with no schedule fields.
 func validateTransactionShape(t *model.Transaction) error {
+	if t.CategoryID == 0 {
+		return invalidf("category_id is required")
+	}
 	if t.IsRecurring {
 		if t.StartDate == nil {
 			return invalidf("recurring transaction requires start_date")
@@ -121,17 +130,13 @@ func (s *transactionsService) GetTransactionByID(ctx context.Context, id uint) (
 	return s.transactionRepo.FindByID(id)
 }
 
-func (s *transactionsService) GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, float64, error) {
+func (s *transactionsService) GetTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, int64, error) {
 	total, err := s.transactionRepo.CountAll()
 	if err != nil {
-		return nil, 0, 0, err
-	}
-	sum, err := s.transactionRepo.SumAllWithFilters(false, nil, "", nil, nil, "")
-	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, err
 	}
 	transactions, err := s.transactionRepo.FindAll(limit, offset)
-	return transactions, total, sum, err
+	return transactions, total, err
 }
 
 func (s *transactionsService) GetLatestTransactions(ctx context.Context) ([]model.Transaction, error) {
@@ -142,17 +147,13 @@ func (s *transactionsService) GetBiggestTransactions(ctx context.Context, month,
 	return s.transactionRepo.FindBiggest(month, year)
 }
 
-func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, float64, error) {
+func (s *transactionsService) GetTransactionsWithFilters(ctx context.Context, currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string, limit, offset int) ([]model.Transaction, int64, error) {
 	total, err := s.transactionRepo.CountAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
 	if err != nil {
-		return nil, 0, 0, err
-	}
-	sum, err := s.transactionRepo.SumAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType)
-	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, err
 	}
 	transactions, err := s.transactionRepo.FindAllWithFilters(currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType, limit, offset)
-	return transactions, total, sum, err
+	return transactions, total, err
 }
 
 func (s *transactionsService) UpdateTransaction(ctx context.Context, transaction *model.Transaction) error {
@@ -189,8 +190,15 @@ func MonthStart(t time.Time) time.Time {
 // GetAverageByType computes each type's monthly average over that type's own
 // active range, using only complete months (the in-progress month would
 // dilute the average). Types whose data lives entirely in the current month
-// fall back to reporting the current month's total.
-func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageType, error) {
+// fall back to reporting the current month's total. Averages cover a
+// trailing window of the last windowMonths complete months (M1), so the
+// number tracks recent behavior instead of converging to an all-time flat
+// line.
+func (s *transactionsService) GetAverageByType(ctx context.Context, windowMonths int) ([]AverageType, error) {
+	if windowMonths < 1 {
+		windowMonths = DefaultAverageWindowMonths
+	}
+
 	monthlyTotals, err := s.transactionRepo.FindNonRecurringMonthlyTotalsByType()
 	if err != nil {
 		log.Printf("[TransactionsService.GetAverageByType] ERROR: Failed to fetch monthly totals: %v", err)
@@ -206,6 +214,7 @@ func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageTy
 	now := time.Now().In(s.loc)
 	currentMonth := MonthStart(now)
 	lastComplete := currentMonth.AddDate(0, -1, 0)
+	windowStart := lastComplete.AddDate(0, -(windowMonths-1), 0)
 
 	type agg struct {
 		total    float64
@@ -231,6 +240,8 @@ func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageTy
 	for _, row := range monthlyTotals {
 		m := time.Date(row.Year, time.Month(row.Month), 1, 0, 0, 0, 0, time.UTC)
 		switch {
+		case m.Before(windowStart):
+			// outside the trailing window
 		case m.Before(currentMonth):
 			add(row.Type, row.MonthlySum, m)
 		case m.Equal(currentMonth):
@@ -243,6 +254,9 @@ func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageTy
 			continue
 		}
 		startM := MonthStart(*tx.StartDate)
+		if startM.Before(windowStart) {
+			startM = windowStart
+		}
 		endM := lastComplete
 		if tx.EndDate != nil {
 			if e := MonthStart(*tx.EndDate); e.Before(endM) {
@@ -252,7 +266,8 @@ func (s *transactionsService) GetAverageByType(ctx context.Context) ([]AverageTy
 		if !endM.Before(startM) {
 			add(tx.Type, tx.Amount*float64(InclusiveMonthCount(startM, endM)), startM)
 		}
-		activeNow := !startM.After(currentMonth) && (tx.EndDate == nil || !MonthStart(*tx.EndDate).Before(currentMonth))
+		startedByNow := !MonthStart(*tx.StartDate).After(currentMonth)
+		activeNow := startedByNow && (tx.EndDate == nil || !MonthStart(*tx.EndDate).Before(currentMonth))
 		if activeNow {
 			currentOnly[tx.Type] += tx.Amount
 		}
@@ -427,6 +442,46 @@ func (s *transactionsService) GetAverageByCategory(ctx context.Context, startDat
 	return result, incomeTotal, nil
 }
 
+type MonthProjection struct {
+	Month              string  `json:"month"`
+	RecurringCommitted float64 `json:"recurring_committed"`
+	OneOffSpent        float64 `json:"one_off_spent"`
+	ProjectedOneOff    float64 `json:"projected_one_off"`
+	ProjectedTotal     float64 `json:"projected_total"`
+}
+
+// projectMonth extrapolates end-of-month spending: recurring commitments are
+// fixed, one-off spending continues at the month-to-date daily run rate.
+func projectMonth(now time.Time, recurringCommitted, oneOffSpent float64) *MonthProjection {
+	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
+	elapsedDays := now.Day()
+
+	projectedOneOff := oneOffSpent / float64(elapsedDays) * float64(daysInMonth)
+
+	return &MonthProjection{
+		Month:              now.Format("2006-01"),
+		RecurringCommitted: recurringCommitted,
+		OneOffSpent:        oneOffSpent,
+		ProjectedOneOff:    projectedOneOff,
+		ProjectedTotal:     recurringCommitted + projectedOneOff,
+	}
+}
+
+// GetCurrentMonthProjection estimates where this month's expenses will land
+// (M6): the recurring commitments already known plus one-off spending
+// extrapolated from the month-to-date run rate.
+func (s *transactionsService) GetCurrentMonthProjection(ctx context.Context) (*MonthProjection, error) {
+	recurring, err := s.transactionRepo.FindCurrentMonthRecurringExpenseTotal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch recurring expense total: %w", err)
+	}
+	oneOff, err := s.transactionRepo.FindMonthToDateOneOffExpenseTotal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch month-to-date expense total: %w", err)
+	}
+	return projectMonth(time.Now().In(s.loc), recurring, oneOff), nil
+}
+
 func (s *transactionsService) GetTransactionsByDateRange(ctx context.Context, startDate, endDate time.Time) ([]model.Transaction, error) {
 	return s.transactionRepo.FindByDateRange(startDate, endDate)
 }
@@ -543,8 +598,8 @@ func (s *transactionsService) GetTransactionMonthlyPercentages(ctx context.Conte
 		percentages.TotalMonthPercent = &pct
 	}
 
-	if tx.CategoryID != nil {
-		categoryTotal, err := s.transactionRepo.FindCurrentMonthTotalByTypeAndCategory(tx.Type, *tx.CategoryID)
+	if tx.CategoryID != 0 {
+		categoryTotal, err := s.transactionRepo.FindCurrentMonthTotalByTypeAndCategory(tx.Type, tx.CategoryID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch current month category total: %w", err)
 		}

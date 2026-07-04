@@ -116,9 +116,16 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 		req.Origin = "web"
 	}
 
+	if req.CategoryID == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "category_id is required",
+		})
+		return
+	}
+
 	transaction := &model.Transaction{
 		IsRecurring:   req.IsRecurring,
-		CategoryID:    req.CategoryID,
+		CategoryID:    *req.CategoryID,
 		SubcategoryID: req.SubcategoryID,
 		CreatedById:   req.CreatedById,
 		Amount:      req.Amount,
@@ -374,13 +381,12 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 
 	var transactions []model.Transaction
 	var total int64
-	var sum float64
 	var err error
 
 	if currentMonth || len(categoryIDs) > 0 || searchQuery != "" || startDate != nil || endDate != nil || transactionType != "" {
-		transactions, total, sum, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType, limit, offset)
+		transactions, total, err = h.transactionService.GetTransactionsWithFilters(c.Request.Context(), currentMonth, categoryIDs, searchQuery, startDate, endDate, transactionType, limit, offset)
 	} else {
-		transactions, total, sum, err = h.transactionService.GetTransactions(c.Request.Context(), limit, offset)
+		transactions, total, err = h.transactionService.GetTransactions(c.Request.Context(), limit, offset)
 	}
 
 	if err != nil {
@@ -397,7 +403,6 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		"total":        total,
 		"limit":        limit,
 		"offset":       offset,
-		"sum":          sum,
 	})
 }
 
@@ -515,7 +520,7 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 		transaction.IsRecurring = *req.IsRecurring
 	}
 	if req.CategoryID != nil {
-		transaction.CategoryID = req.CategoryID
+		transaction.CategoryID = *req.CategoryID
 	}
 	if req.SubcategoryID != nil {
 		transaction.SubcategoryID = req.SubcategoryID
@@ -794,7 +799,19 @@ func (h *TransactionHandler) GetTransactionsByCategories(c *gin.Context) {
 }
 
 func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
-	result, err := h.transactionService.GetAverageByType(c.Request.Context())
+	window := 0
+	if w := c.Query("window"); w != "" {
+		parsed, err := strconv.Atoi(w)
+		if err != nil || parsed < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "invalid window: must be a positive number of months",
+			})
+			return
+		}
+		window = parsed
+	}
+
+	result, err := h.transactionService.GetAverageByType(c.Request.Context(), window)
 
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -809,6 +826,19 @@ func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"averageByType": result,
 	})
+}
+
+func (h *TransactionHandler) GetCurrentMonthProjection(c *gin.Context) {
+	projection, err := h.transactionService.GetCurrentMonthProjection(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to compute month projection",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, projection)
 }
 
 func (h *TransactionHandler) GetAverageByCategory(c *gin.Context) {

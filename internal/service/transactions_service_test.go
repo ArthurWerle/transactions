@@ -22,6 +22,8 @@ type mockTransactionsRepository struct {
 	recurringByType   []repository.RecurringTypeTransaction
 	incomeTotal       float64
 	recurringIncomes  []repository.RecurringAmount
+	recurringMonthly  float64
+	oneOffMonthToDate float64
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -63,8 +65,12 @@ func (m *mockTransactionsRepository) CountAllWithFilters(currentMonth bool, cate
 	return 0, nil
 }
 
-func (m *mockTransactionsRepository) SumAllWithFilters(currentMonth bool, categoryIDs []uint, searchQuery string, startDate, endDate *time.Time, transactionType string) (float64, error) {
-	return 0, nil
+func (m *mockTransactionsRepository) FindCurrentMonthRecurringExpenseTotal() (float64, error) {
+	return m.recurringMonthly, nil
+}
+
+func (m *mockTransactionsRepository) FindMonthToDateOneOffExpenseTotal() (float64, error) {
+	return m.oneOffMonthToDate, nil
 }
 
 func (m *mockTransactionsRepository) FindBiggest(month, year int) ([]model.Transaction, error) {
@@ -238,40 +244,45 @@ func TestTransactionShapeValidation(t *testing.T) {
 	}{
 		{
 			name: "valid one-off",
-			tx:   model.Transaction{Date: &now, Amount: 10, Type: "expense"},
+			tx:   model.Transaction{Date: &now, Amount: 10, Type: "expense", CategoryID: 1},
 		},
 		{
 			name: "valid recurring",
-			tx:   model.Transaction{IsRecurring: true, StartDate: &start, EndDate: &end, Amount: 10, Type: "expense"},
+			tx:   model.Transaction{IsRecurring: true, StartDate: &start, EndDate: &end, Amount: 10, Type: "expense", CategoryID: 1},
+		},
+		{
+			name:    "missing category",
+			tx:      model.Transaction{Date: &now, Amount: 10, Type: "expense"},
+			wantErr: "category_id is required",
 		},
 		{
 			name:    "recurring without start_date",
-			tx:      model.Transaction{IsRecurring: true, EndDate: &end},
+			tx:      model.Transaction{IsRecurring: true, EndDate: &end, CategoryID: 1},
 			wantErr: "start_date",
 		},
 		{
 			name:    "recurring with date",
-			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Date: &now},
+			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Date: &now, CategoryID: 1},
 			wantErr: "must not have date",
 		},
 		{
 			name:    "recurring with non-monthly frequency",
-			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Frequency: &weekly},
+			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Frequency: &weekly, CategoryID: 1},
 			wantErr: "monthly",
 		},
 		{
 			name:    "recurring with end before start",
-			tx:      model.Transaction{IsRecurring: true, StartDate: &end, EndDate: &start, Frequency: &monthly},
+			tx:      model.Transaction{IsRecurring: true, StartDate: &end, EndDate: &start, Frequency: &monthly, CategoryID: 1},
 			wantErr: "end_date must not be before start_date",
 		},
 		{
 			name:    "one-off without date",
-			tx:      model.Transaction{},
+			tx:      model.Transaction{CategoryID: 1},
 			wantErr: "requires date",
 		},
 		{
 			name:    "one-off with schedule fields",
-			tx:      model.Transaction{Date: &now, EndDate: &end},
+			tx:      model.Transaction{Date: &now, EndDate: &end, CategoryID: 1},
 			wantErr: "must not have start_date, end_date or frequency",
 		},
 	}
@@ -307,7 +318,7 @@ func TestCreateTransaction_DefaultsRecurringFrequencyToMonthly(t *testing.T) {
 	svc := newTestService(repo)
 
 	start := monthsAgo(1)
-	tx := model.Transaction{IsRecurring: true, StartDate: &start, Amount: 10, Type: "expense"}
+	tx := model.Transaction{IsRecurring: true, StartDate: &start, Amount: 10, Type: "expense", CategoryID: 1}
 	if err := svc.CreateTransaction(context.Background(), &tx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -326,7 +337,7 @@ func TestUpdateTransaction_NormalizesShape(t *testing.T) {
 	weekly := "weekly"
 
 	// Legacy corrupted row: one-off carrying schedule fields (pre-F1 web data).
-	legacy := model.Transaction{ID: 1, Date: &now, EndDate: &end, Frequency: &weekly, Amount: 10, Type: "expense"}
+	legacy := model.Transaction{ID: 1, Date: &now, EndDate: &end, Frequency: &weekly, Amount: 10, Type: "expense", CategoryID: 1}
 	if err := svc.UpdateTransaction(context.Background(), &legacy); err != nil {
 		t.Fatalf("expected legacy row to be healed, got %v", err)
 	}
@@ -335,7 +346,7 @@ func TestUpdateTransaction_NormalizesShape(t *testing.T) {
 	}
 
 	// Flip to recurring: date must be cleared, frequency coerced to monthly.
-	rec := model.Transaction{ID: 2, IsRecurring: true, Date: &now, StartDate: &start, Frequency: &weekly, Amount: 10, Type: "expense"}
+	rec := model.Transaction{ID: 2, IsRecurring: true, Date: &now, StartDate: &start, Frequency: &weekly, Amount: 10, Type: "expense", CategoryID: 1}
 	if err := svc.UpdateTransaction(context.Background(), &rec); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +358,7 @@ func TestUpdateTransaction_NormalizesShape(t *testing.T) {
 	}
 
 	// Flip to recurring without start_date must fail.
-	bad := model.Transaction{ID: 3, IsRecurring: true, Date: &now, Amount: 10, Type: "expense"}
+	bad := model.Transaction{ID: 3, IsRecurring: true, Date: &now, Amount: 10, Type: "expense", CategoryID: 1}
 	if err := svc.UpdateTransaction(context.Background(), &bad); !errors.Is(err, ErrInvalidTransaction) {
 		t.Errorf("expected ErrInvalidTransaction, got %v", err)
 	}
@@ -372,7 +383,7 @@ func TestGetAverageByType_PerTypeRanges(t *testing.T) {
 		{Type: "expense", Year: expenseMonth.Year(), Month: int(expenseMonth.Month()), MonthlySum: 200},
 	}
 
-	result, err := svc.GetAverageByType(context.Background())
+	result, err := svc.GetAverageByType(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -406,7 +417,7 @@ func TestGetAverageByType_ExcludesCurrentMonth(t *testing.T) {
 		{Type: "expense", Year: current.Year(), Month: int(current.Month()), MonthlySum: 9999},
 	}
 
-	result, err := svc.GetAverageByType(context.Background())
+	result, err := svc.GetAverageByType(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -427,7 +438,7 @@ func TestGetAverageByType_CurrentMonthOnlyFallback(t *testing.T) {
 		{Type: "expense", Year: current.Year(), Month: int(current.Month()), MonthlySum: 300},
 	}
 
-	result, err := svc.GetAverageByType(context.Background())
+	result, err := svc.GetAverageByType(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -450,7 +461,7 @@ func TestGetAverageByType_RecurringExpansion(t *testing.T) {
 		{Type: "expense", Amount: 20, StartDate: &start, EndDate: &end},
 	}
 
-	result, err := svc.GetAverageByType(context.Background())
+	result, err := svc.GetAverageByType(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -481,7 +492,7 @@ func TestGetAverageByType_MixedRecurringAndNon(t *testing.T) {
 		{Type: "expense", Amount: 20, StartDate: &recurringStart, EndDate: &recurringEnd},
 	}
 
-	result, err := svc.GetAverageByType(context.Background())
+	result, err := svc.GetAverageByType(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -495,11 +506,105 @@ func TestGetAverageByType_MixedRecurringAndNon(t *testing.T) {
 	}
 }
 
+func TestGetAverageByType_WindowClipsOldMonths(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// Spending 8 months ago is outside a 6-month trailing window (M1) but
+	// inside a 12-month one.
+	oldMonth := monthsAgo(8)
+	recentMonth := monthsAgo(2)
+	repo.monthlyTotals = []repository.MonthlyTypeTotal{
+		{Type: "expense", Year: oldMonth.Year(), Month: int(oldMonth.Month()), MonthlySum: 900},
+		{Type: "expense", Year: recentMonth.Year(), Month: int(recentMonth.Month()), MonthlySum: 300},
+	}
+
+	narrow, err := svc.GetAverageByType(context.Background(), 6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Only the recent month counts, averaged over its own in-window range.
+	expectedNarrow := 300.0 / float64(InclusiveMonthCount(recentMonth, lastCompleteMonth()))
+	if math.Abs(narrow[0].Average-expectedNarrow) > 0.001 {
+		t.Errorf("window=6 average = %v, expected %v (old month excluded)", narrow[0].Average, expectedNarrow)
+	}
+
+	wide, err := svc.GetAverageByType(context.Background(), 12)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expectedWide := (900.0 + 300.0) / float64(InclusiveMonthCount(oldMonth, lastCompleteMonth()))
+	if math.Abs(wide[0].Average-expectedWide) > 0.001 {
+		t.Errorf("window=12 average = %v, expected %v (old month included)", wide[0].Average, expectedWide)
+	}
+}
+
+func TestGetAverageByType_WindowClipsRecurringStart(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// Open-ended recurring $100/month running for 20 months: a 6-month
+	// window must average exactly $100, not dilute or accumulate.
+	start := monthsAgo(20)
+	repo.recurringByType = []repository.RecurringTypeTransaction{
+		{Type: "expense", Amount: 100, StartDate: &start, EndDate: nil},
+	}
+
+	result, err := svc.GetAverageByType(context.Background(), 6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 type, got %d", len(result))
+	}
+	if math.Abs(result[0].Average-100) > 0.001 {
+		t.Errorf("expected average 100 over the window, got %v", result[0].Average)
+	}
+}
+
+// ---- projectMonth tests ----
+
+func TestProjectMonth(t *testing.T) {
+	// July 10th: R$500 one-off spent in 10 of 31 days → R$1,550 projected
+	// one-offs; plus R$800 in recurring commitments.
+	now := time.Date(2026, 7, 10, 15, 0, 0, 0, time.UTC)
+	p := projectMonth(now, 800, 500)
+
+	if p.Month != "2026-07" {
+		t.Errorf("expected month 2026-07, got %s", p.Month)
+	}
+	if p.RecurringCommitted != 800 {
+		t.Errorf("expected recurring 800, got %v", p.RecurringCommitted)
+	}
+	if p.OneOffSpent != 500 {
+		t.Errorf("expected one-off spent 500, got %v", p.OneOffSpent)
+	}
+	if math.Abs(p.ProjectedOneOff-1550) > 0.001 {
+		t.Errorf("expected projected one-off 1550, got %v", p.ProjectedOneOff)
+	}
+	if math.Abs(p.ProjectedTotal-2350) > 0.001 {
+		t.Errorf("expected projected total 2350, got %v", p.ProjectedTotal)
+	}
+}
+
+func TestProjectMonth_LastDayEqualsActuals(t *testing.T) {
+	// On the last day of the month the projection is just what was spent.
+	now := time.Date(2026, 6, 30, 23, 0, 0, 0, time.UTC)
+	p := projectMonth(now, 200, 900)
+
+	if math.Abs(p.ProjectedOneOff-900) > 0.001 {
+		t.Errorf("expected projected one-off 900, got %v", p.ProjectedOneOff)
+	}
+	if math.Abs(p.ProjectedTotal-1100) > 0.001 {
+		t.Errorf("expected projected total 1100, got %v", p.ProjectedTotal)
+	}
+}
+
 func TestGetAverageByType_EmptyData(t *testing.T) {
 	repo := newMockRepository()
 	svc := newTestService(repo)
 
-	result, err := svc.GetAverageByType(context.Background())
+	result, err := svc.GetAverageByType(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
