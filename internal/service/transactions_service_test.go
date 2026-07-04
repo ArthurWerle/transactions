@@ -13,17 +13,20 @@ import (
 )
 
 type mockTransactionsRepository struct {
-	transactions      map[uint]*model.Transaction
-	created           []*model.Transaction
-	nonRecurringSums  []repository.CategoryExpenseSummary
-	recurringExpenses []repository.RecurringCategoryExpense
-	earliestDate      *time.Time
-	monthlyTotals     []repository.MonthlyTypeTotal
-	recurringByType   []repository.RecurringTypeTransaction
-	incomeTotal       float64
-	recurringIncomes  []repository.RecurringAmount
-	recurringMonthly  float64
-	oneOffMonthToDate float64
+	transactions        map[uint]*model.Transaction
+	created             []*model.Transaction
+	nonRecurringSums    []repository.CategoryExpenseSummary
+	recurringExpenses   []repository.RecurringCategoryExpense
+	earliestDate        *time.Time
+	monthlyTotals       []repository.MonthlyTypeTotal
+	recurringByType     []repository.RecurringTypeTransaction
+	incomeTotal         float64
+	recurringIncomes    []repository.RecurringAmount
+	recurringMonthly    float64
+	oneOffMonthToDate   float64
+	monthlyFlow         []repository.MonthlyFlowRow
+	categoryFlow        []repository.CategoryMonthlyFlowRow
+	categoryMonthTotals []repository.CategoryMonthTotal
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -94,8 +97,16 @@ func (m *mockTransactionsRepository) FindByDateRange(startDate, endDate time.Tim
 	return nil, nil
 }
 
-func (m *mockTransactionsRepository) FindByCategories(categoriesIDs []uint, limit, offset int) ([]model.Transaction, error) {
-	return nil, nil
+func (m *mockTransactionsRepository) FindMonthlyFlow(startMonth, endMonth time.Time) ([]repository.MonthlyFlowRow, error) {
+	return m.monthlyFlow, nil
+}
+
+func (m *mockTransactionsRepository) FindCategoryMonthlyFlow(startMonth, endMonth time.Time, categoryIDs []uint) ([]repository.CategoryMonthlyFlowRow, error) {
+	return m.categoryFlow, nil
+}
+
+func (m *mockTransactionsRepository) FindCategoryExpenseTotalsForMonth(month time.Time) ([]repository.CategoryMonthTotal, error) {
+	return m.categoryMonthTotals, nil
 }
 
 func (m *mockTransactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {
@@ -256,33 +267,43 @@ func TestTransactionShapeValidation(t *testing.T) {
 			wantErr: "category_id is required",
 		},
 		{
+			name:    "non-positive amount",
+			tx:      model.Transaction{Date: &now, Amount: 0, Type: "expense", CategoryID: 1},
+			wantErr: "amount must be greater than 0",
+		},
+		{
+			name:    "invalid type",
+			tx:      model.Transaction{Date: &now, Amount: 10, Type: "transfer", CategoryID: 1},
+			wantErr: "type must be either 'income' or 'expense'",
+		},
+		{
 			name:    "recurring without start_date",
-			tx:      model.Transaction{IsRecurring: true, EndDate: &end, CategoryID: 1},
+			tx:      model.Transaction{IsRecurring: true, EndDate: &end, Amount: 10, Type: "expense", CategoryID: 1},
 			wantErr: "start_date",
 		},
 		{
 			name:    "recurring with date",
-			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Date: &now, CategoryID: 1},
+			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Date: &now, Amount: 10, Type: "expense", CategoryID: 1},
 			wantErr: "must not have date",
 		},
 		{
 			name:    "recurring with non-monthly frequency",
-			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Frequency: &weekly, CategoryID: 1},
+			tx:      model.Transaction{IsRecurring: true, StartDate: &start, Frequency: &weekly, Amount: 10, Type: "expense", CategoryID: 1},
 			wantErr: "monthly",
 		},
 		{
 			name:    "recurring with end before start",
-			tx:      model.Transaction{IsRecurring: true, StartDate: &end, EndDate: &start, Frequency: &monthly, CategoryID: 1},
+			tx:      model.Transaction{IsRecurring: true, StartDate: &end, EndDate: &start, Frequency: &monthly, Amount: 10, Type: "expense", CategoryID: 1},
 			wantErr: "end_date must not be before start_date",
 		},
 		{
 			name:    "one-off without date",
-			tx:      model.Transaction{CategoryID: 1},
+			tx:      model.Transaction{Amount: 10, Type: "expense", CategoryID: 1},
 			wantErr: "requires date",
 		},
 		{
 			name:    "one-off with schedule fields",
-			tx:      model.Transaction{Date: &now, EndDate: &end, CategoryID: 1},
+			tx:      model.Transaction{Date: &now, EndDate: &end, Amount: 10, Type: "expense", CategoryID: 1},
 			wantErr: "must not have start_date, end_date or frequency",
 		},
 	}

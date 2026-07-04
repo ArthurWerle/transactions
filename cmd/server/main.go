@@ -122,9 +122,9 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 		})
 	})
 
-	v1 := router.Group("/api/v2")
+	api := router.Group("/api/v2")
 	{
-		transactions := v1.Group("/transactions")
+		transactions := api.Group("/transactions")
 		{
 			transactions.GET("", transactionHandler.GetTransactions)
 			transactions.POST("", transactionHandler.CreateTransaction)
@@ -133,16 +133,23 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.DELETE("/:id", transactionHandler.DeleteTransaction)
 			transactions.POST("/:id/prepay", transactionHandler.PrepayTransaction)
 			transactions.PATCH("/:id/end", transactionHandler.EndRecurringTransaction)
-			transactions.POST("/by-categories", transactionHandler.GetTransactionsByCategories)
-			transactions.POST("/by-date-range", transactionHandler.GetTransactionsByDateRange)
+			transactions.GET("/by-date-range", transactionHandler.GetTransactionsByDateRange)
 			transactions.GET("/latest", transactionHandler.GetLatestTransactions)
 			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)
 			transactions.GET("/average/by-type", transactionHandler.GetAverageByType)
 			transactions.GET("/average/by-category", transactionHandler.GetAverageByCategory)
 			transactions.GET("/projections/current-month", transactionHandler.GetCurrentMonthProjection)
+
+			reports := transactions.Group("/reports")
+			{
+				reports.GET("/monthly-history", transactionHandler.GetMonthlyHistory)
+				reports.GET("/category-history", transactionHandler.GetCategoryHistory)
+				reports.GET("/month-overview", transactionHandler.GetMonthOverview)
+				reports.GET("/monthly-expenses-by-category", transactionHandler.GetMonthlyExpensesByCategory)
+			}
 		}
 
-		categories := v1.Group("/categories")
+		categories := api.Group("/categories")
 		{
 			categories.GET("", categoryHandler.GetCategories)
 			categories.POST("", categoryHandler.CreateCategory)
@@ -151,7 +158,7 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			categories.DELETE("/:id", categoryHandler.DeleteCategory)
 		}
 
-		subcategories := v1.Group("/subcategories")
+		subcategories := api.Group("/subcategories")
 		{
 			subcategories.GET("", subcategoryHandler.GetSubcategories)
 			subcategories.POST("", subcategoryHandler.CreateSubcategory)
@@ -160,7 +167,7 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			subcategories.DELETE("/:id", subcategoryHandler.DeleteSubcategory)
 		}
 
-		locations := v1.Group("/locations")
+		locations := api.Group("/locations")
 		{
 			locations.GET("", locationHandler.GetLocations)
 			locations.POST("", locationHandler.CreateLocation)

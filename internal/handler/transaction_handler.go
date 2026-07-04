@@ -91,26 +91,6 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 		return
 	}
 
-	// Validate amount
-	if req.Amount <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Amount must be greater than 0",
-		})
-		return
-	}
-
-	// Validate transaction type
-	validTypes := map[string]bool{
-		"income":  true,
-		"expense": true,
-	}
-	if !validTypes[req.Type] {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Type must be either 'income' or 'expense'",
-		})
-		return
-	}
-
 	validOrigins := map[string]bool{"web": true, "api": true, "mcp": true}
 	if req.Origin == "" || !validOrigins[req.Origin] {
 		req.Origin = "web"
@@ -196,60 +176,6 @@ type TransactionDetailResponse struct {
 	TotalMonthPercent    *float64 `json:"total_month_percent,omitempty"`
 }
 
-// computeTotalPaid returns how much of a recurring schedule has been paid so
-// far. The current month counts as paid — the same convention prepay uses —
-// so computeTotalPaid + computeTotalLeft always covers the whole schedule.
-func computeTotalPaid(tx *model.Transaction, now time.Time) *float64 {
-	if !tx.IsRecurring || tx.StartDate == nil {
-		return nil
-	}
-
-	startMonth := service.MonthStart(*tx.StartDate)
-	currentMonth := service.MonthStart(now)
-	if startMonth.After(currentMonth) {
-		zero := 0.0
-		return &zero
-	}
-
-	effectiveEnd := currentMonth
-	if tx.EndDate != nil {
-		if e := service.MonthStart(*tx.EndDate); e.Before(effectiveEnd) {
-			effectiveEnd = e
-		}
-	}
-
-	total := tx.Amount * float64(service.InclusiveMonthCount(startMonth, effectiveEnd))
-	return &total
-}
-
-func computeTotalLeft(tx *model.Transaction, now time.Time) *float64 {
-	if !tx.IsRecurring || tx.StartDate == nil || tx.EndDate == nil {
-		return nil
-	}
-
-	startMonth := service.MonthStart(*tx.StartDate)
-	endMonth := service.MonthStart(*tx.EndDate)
-	currentMonth := service.MonthStart(now)
-
-	if endMonth.Before(startMonth) {
-		zero := 0.0
-		return &zero
-	}
-
-	totalMonths := service.InclusiveMonthCount(startMonth, endMonth)
-	paidMonths := 0
-	if !startMonth.After(currentMonth) {
-		effectiveEnd := currentMonth
-		if endMonth.Before(effectiveEnd) {
-			effectiveEnd = endMonth
-		}
-		paidMonths = service.InclusiveMonthCount(startMonth, effectiveEnd)
-	}
-
-	left := tx.Amount * float64(totalMonths-paidMonths)
-	return &left
-}
-
 func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 	idParam := c.Param("id")
 	var id uint
@@ -281,8 +207,8 @@ func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 	now := time.Now().In(h.loc)
 	resp := TransactionDetailResponse{
 		Transaction: transaction,
-		TotalPaid:   computeTotalPaid(transaction, now),
-		TotalLeft:   computeTotalLeft(transaction, now),
+		TotalPaid:   service.ComputeTotalPaid(transaction, now),
+		TotalLeft:   service.ComputeTotalLeft(transaction, now),
 	}
 	if percentages != nil {
 		resp.CategoryMonthPercent = percentages.CategoryMonthPercent
@@ -526,25 +452,9 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 		transaction.SubcategoryID = req.SubcategoryID
 	}
 	if req.Amount != nil {
-		if *req.Amount <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Amount must be greater than 0",
-			})
-			return
-		}
 		transaction.Amount = *req.Amount
 	}
 	if req.Type != nil {
-		validTypes := map[string]bool{
-			"income":  true,
-			"expense": true,
-		}
-		if !validTypes[*req.Type] {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Type must be either 'income' or 'expense'",
-			})
-			return
-		}
 		transaction.Type = *req.Type
 	}
 	if req.Description != nil {
@@ -665,14 +575,6 @@ func (h *TransactionHandler) EndRecurringTransaction(c *gin.Context) {
 		return
 	}
 
-	if transaction.StartDate != nil && parsedEndDate.Before(*transaction.StartDate) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid end_date",
-			"details": "end_date must not be before start_date",
-		})
-		return
-	}
-
 	transaction.EndDate = &parsedEndDate
 
 	if err := h.transactionService.UpdateTransaction(c.Request.Context(), transaction); err != nil {
@@ -710,31 +612,8 @@ func (h *TransactionHandler) DeleteTransaction(c *gin.Context) {
 }
 
 func (h *TransactionHandler) GetTransactionsByDateRange(c *gin.Context) {
-	startDateStr := c.Query("start_date")
-	endDateStr := c.Query("end_date")
-
-	if startDateStr == "" || endDateStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Both start_date and end_date query parameters are required",
-		})
-		return
-	}
-
-	startDate, err := time.ParseInLocation("2006-01-02", startDateStr, h.loc)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid start_date format",
-			"details": "Start date must be in YYYY-MM-DD format (e.g., 2024-01-15)",
-		})
-		return
-	}
-
-	endDate, err := time.ParseInLocation("2006-01-02", endDateStr, h.loc)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid end_date format",
-			"details": "End date must be in YYYY-MM-DD format (e.g., 2024-12-31)",
-		})
+	startDate, endDate, ok := h.parseDateRangeParams(c)
+	if !ok {
 		return
 	}
 
@@ -752,49 +631,153 @@ func (h *TransactionHandler) GetTransactionsByDateRange(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"transactions": transactions,
 		"count":        len(transactions),
-		"start_date":   startDateStr,
-		"end_date":     endDateStr,
+		"start_date":   c.Query("start_date"),
+		"end_date":     c.Query("end_date"),
 	})
 }
 
-type GetTransactionsByCategoriesRequest struct {
-	CategoryIDs []uint `json:"category_ids" binding:"required"`
-	Limit       int    `json:"limit,omitempty"`
-	Offset      int    `json:"offset,omitempty"`
+// parseDateRangeParams reads required start_date/end_date (YYYY-MM-DD, in
+// the reporting timezone). Returns ok=false with the response written.
+func (h *TransactionHandler) parseDateRangeParams(c *gin.Context) (time.Time, time.Time, bool) {
+	startStr := c.Query("start_date")
+	endStr := c.Query("end_date")
+	if startStr == "" || endStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Both start_date and end_date query parameters are required",
+		})
+		return time.Time{}, time.Time{}, false
+	}
+	start, err := time.ParseInLocation("2006-01-02", startStr, h.loc)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid start_date format",
+			"details": "start_date must be in YYYY-MM-DD format",
+		})
+		return time.Time{}, time.Time{}, false
+	}
+	end, err := time.ParseInLocation("2006-01-02", endStr, h.loc)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid end_date format",
+			"details": "end_date must be in YYYY-MM-DD format",
+		})
+		return time.Time{}, time.Time{}, false
+	}
+	return start, end, true
 }
 
-func (h *TransactionHandler) GetTransactionsByCategories(c *gin.Context) {
-	var req GetTransactionsByCategoriesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request body",
+// parseMonthYearParams reads optional month/year params, defaulting to the
+// current month in the reporting timezone.
+func (h *TransactionHandler) parseMonthYearParams(c *gin.Context) (int, int, bool) {
+	now := time.Now().In(h.loc)
+	month := int(now.Month())
+	year := now.Year()
+
+	if monthStr := c.Query("month"); monthStr != "" {
+		m, err := strconv.Atoi(monthStr)
+		if err != nil || m < 1 || m > 12 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid month: must be between 1 and 12"})
+			return 0, 0, false
+		}
+		month = m
+	}
+	if yearStr := c.Query("year"); yearStr != "" {
+		y, err := strconv.Atoi(yearStr)
+		if err != nil || y < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid year"})
+			return 0, 0, false
+		}
+		year = y
+	}
+	return month, year, true
+}
+
+func (h *TransactionHandler) GetMonthlyHistory(c *gin.Context) {
+	start, end, ok := h.parseDateRangeParams(c)
+	if !ok {
+		return
+	}
+
+	points, err := h.transactionService.GetMonthlyHistory(c.Request.Context(), start, end)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch monthly history",
 			"details": err.Error(),
 		})
 		return
 	}
 
-	// Set defaults
-	limit := req.Limit
-	if limit == 0 {
-		limit = 50
-	}
-	offset := req.Offset
+	c.JSON(http.StatusOK, points)
+}
 
-	transactions, err := h.transactionService.GetTransactionsByCategories(c.Request.Context(), req.CategoryIDs, limit, offset)
+func (h *TransactionHandler) GetCategoryHistory(c *gin.Context) {
+	start, end, ok := h.parseDateRangeParams(c)
+	if !ok {
+		return
+	}
+
+	var categoryIDs []uint
+	if categoryStr := c.Query("category"); categoryStr != "" {
+		for _, part := range strings.Split(categoryStr, ",") {
+			id, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":   "Invalid category ID",
+					"details": fmt.Sprintf("Cannot parse category ID: %s", part),
+				})
+				return
+			}
+			categoryIDs = append(categoryIDs, uint(id))
+		}
+	}
+
+	series, err := h.transactionService.GetCategoryHistory(c.Request.Context(), start, end, categoryIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch transactions",
+			"error":   "Failed to fetch category history",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, series)
+}
+
+func (h *TransactionHandler) GetMonthOverview(c *gin.Context) {
+	month, year, ok := h.parseMonthYearParams(c)
+	if !ok {
+		return
+	}
+
+	overview, err := h.transactionService.GetMonthOverview(c.Request.Context(), month, year)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch month overview",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, overview)
+}
+
+func (h *TransactionHandler) GetMonthlyExpensesByCategory(c *gin.Context) {
+	month, year, ok := h.parseMonthYearParams(c)
+	if !ok {
+		return
+	}
+
+	totals, err := h.transactionService.GetMonthlyExpensesByCategory(c.Request.Context(), month, year)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch monthly expenses by category",
 			"details": err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"transactions": transactions,
-		"count":        len(transactions),
-		"category_ids": req.CategoryIDs,
-		"limit":        limit,
-		"offset":       offset,
+		"categories": totals,
 	})
 }
 
