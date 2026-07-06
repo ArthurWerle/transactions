@@ -36,7 +36,7 @@ services:
       DB_NAME: ${DB_NAME}
       SERVER_PORT: ${SERVER_PORT}
       LOG_LEVEL: ${LOG_LEVEL}
-      IDENTITY_BASE_URL: ${IDENTITY_BASE_URL:-http://identity:8080}
+      IDENTITY_BASE_URL: ${IDENTITY_BASE_URL:-http://identity-staging:8080}
     ports:
       - "${SERVICE_PORT}:${SERVER_PORT}"
     depends_on:
