@@ -54,9 +54,14 @@ func main() {
 	locationService := service.NewLocationService(locationRepo)
 	locationHandler := handler.NewLocationHandler(locationService)
 
+	var identityClient service.IdentityClient
+	if cfg.Identity.BaseURL != "" {
+		identityClient = service.NewHTTPIdentityClient(cfg.Identity.BaseURL)
+	}
+
 	transactionRepo := repository.NewTransactionsRepository(db, reportingLoc)
 	transactionService := service.NewTransactionsService(transactionRepo, reportingLoc)
-	transactionHandler := handler.NewTransactionHandler(transactionService, locationService, reportingLoc)
+	transactionHandler := handler.NewTransactionHandler(transactionService, locationService, identityClient, reportingLoc)
 
 	categoryRepo := repository.NewCategoryRepository(db)
 	categoryService := service.NewCategoryService(categoryRepo)
