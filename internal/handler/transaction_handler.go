@@ -16,13 +16,15 @@ import (
 type TransactionHandler struct {
 	transactionService service.TransactionsService
 	locationService    service.LocationService
+	identityClient     service.IdentityClient
 	loc                *time.Location
 }
 
-func NewTransactionHandler(transactionService service.TransactionsService, locationService service.LocationService, loc *time.Location) *TransactionHandler {
+func NewTransactionHandler(transactionService service.TransactionsService, locationService service.LocationService, identityClient service.IdentityClient, loc *time.Location) *TransactionHandler {
 	return &TransactionHandler{
 		transactionService: transactionService,
 		locationService:    locationService,
+		identityClient:     identityClient,
 		loc:                loc,
 	}
 }
@@ -170,6 +172,7 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 
 type TransactionDetailResponse struct {
 	*model.Transaction
+	CreatedByName        *string  `json:"created_by_name,omitempty"`
 	TotalPaid            *float64 `json:"total_paid,omitempty"`
 	TotalLeft            *float64 `json:"total_left,omitempty"`
 	CategoryMonthPercent *float64 `json:"category_month_percent,omitempty"`
@@ -213,6 +216,15 @@ func (h *TransactionHandler) GetTransactionByID(c *gin.Context) {
 	if percentages != nil {
 		resp.CategoryMonthPercent = percentages.CategoryMonthPercent
 		resp.TotalMonthPercent = percentages.TotalMonthPercent
+	}
+
+	// Best-effort enrichment: label the transaction with its creator's name
+	// from the identity service. A missing name (identity unavailable, user
+	// deleted, or legacy transaction with no creator) must not fail the read.
+	if h.identityClient != nil && transaction.CreatedById != 0 {
+		if name, err := h.identityClient.GetUserName(c.Request.Context(), transaction.CreatedById); err == nil && name != "" {
+			resp.CreatedByName = &name
+		}
 	}
 
 	c.JSON(http.StatusOK, resp)

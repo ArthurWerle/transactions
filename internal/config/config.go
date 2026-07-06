@@ -10,6 +10,14 @@ type Config struct {
 	Database  DatabaseConfig
 	Log       LogConfig
 	Reporting ReportingConfig
+	Identity  IdentityConfig
+}
+
+type IdentityConfig struct {
+	// BaseURL is the identity service address reachable on the internal
+	// docker network. Used to resolve the display name of a transaction's
+	// creator. Empty disables enrichment.
+	BaseURL string
 }
 
 type ReportingConfig struct {
@@ -53,6 +61,9 @@ func Load() (*Config, error) {
 		},
 		Reporting: ReportingConfig{
 			Timezone: getEnv("REPORTING_TIMEZONE", "America/Sao_Paulo"),
+		},
+		Identity: IdentityConfig{
+			BaseURL: getEnv("IDENTITY_BASE_URL", "http://identity:8080"),
 		},
 	}
 
