@@ -193,3 +193,54 @@ func TestGetMonthOverview_Variations(t *testing.T) {
 		t.Errorf("expected nil expense variation for zero last month, got %v", *overview.Expense.PercentageVariation)
 	}
 }
+
+func TestGetMonthlyExpensesBySubcategory(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// Repository already returns largest-first with a "(none)" bucket for
+	// transactions that have no subcategory; the service passes it through.
+	repo.subcategoryMonthTotals = []repository.SubcategoryMonthTotal{
+		{SubcategoryName: "Groceries", Total: 300},
+		{SubcategoryName: "(none)", Total: 120},
+		{SubcategoryName: "Dining (deleted)", Total: 50},
+	}
+
+	got, err := svc.GetMonthlyExpensesBySubcategory(context.Background(), 6, 2026)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(got))
+	}
+	if got[0].SubcategoryName != "Groceries" || got[0].Total != 300 {
+		t.Errorf("unexpected first row: %+v", got[0])
+	}
+	if got[1].SubcategoryName != "(none)" || got[1].Total != 120 {
+		t.Errorf("expected the (none) bucket preserved, got %+v", got[1])
+	}
+}
+
+func TestGetMonthlyExpensesByLocation(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	repo.locationMonthTotals = []repository.LocationMonthTotal{
+		{LocationName: "Supermarket", Total: 400},
+		{LocationName: "(none)", Total: 75},
+	}
+
+	got, err := svc.GetMonthlyExpensesByLocation(context.Background(), 6, 2026)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(got))
+	}
+	if got[0].LocationName != "Supermarket" || got[0].Total != 400 {
+		t.Errorf("unexpected first row: %+v", got[0])
+	}
+	if got[1].LocationName != "(none)" || got[1].Total != 75 {
+		t.Errorf("expected the (none) bucket preserved, got %+v", got[1])
+	}
+}

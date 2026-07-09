@@ -150,6 +150,8 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 				reports.GET("/category-history", transactionHandler.GetCategoryHistory)
 				reports.GET("/month-overview", transactionHandler.GetMonthOverview)
 				reports.GET("/monthly-expenses-by-category", transactionHandler.GetMonthlyExpensesByCategory)
+				reports.GET("/monthly-expenses-by-subcategory", transactionHandler.GetMonthlyExpensesBySubcategory)
+				reports.GET("/monthly-expenses-by-location", transactionHandler.GetMonthlyExpensesByLocation)
 			}
 		}
 

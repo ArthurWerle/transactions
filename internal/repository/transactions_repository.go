@@ -61,6 +61,16 @@ type CategoryMonthTotal struct {
 	Total        float64 `gorm:"column:total"`
 }
 
+type SubcategoryMonthTotal struct {
+	SubcategoryName string  `gorm:"column:subcategory_name"`
+	Total           float64 `gorm:"column:total"`
+}
+
+type LocationMonthTotal struct {
+	LocationName string  `gorm:"column:location_name"`
+	Total        float64 `gorm:"column:total"`
+}
+
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
@@ -77,6 +87,8 @@ type TransactionsRepository interface {
 	FindMonthlyFlow(startMonth, endMonth time.Time) ([]MonthlyFlowRow, error)
 	FindCategoryMonthlyFlow(startMonth, endMonth time.Time, categoryIDs []uint) ([]CategoryMonthlyFlowRow, error)
 	FindCategoryExpenseTotalsForMonth(month time.Time) ([]CategoryMonthTotal, error)
+	FindSubcategoryExpenseTotalsForMonth(month time.Time) ([]SubcategoryMonthTotal, error)
+	FindLocationExpenseTotalsForMonth(month time.Time) ([]LocationMonthTotal, error)
 	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
 	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
 	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
@@ -374,6 +386,82 @@ func (r *transactionsRepository) FindCategoryExpenseTotalsForMonth(month time.Ti
 		FROM activity a
 		JOIN categories c ON c.id = a.category_id
 		GROUP BY c.name, c.deleted_at
+		ORDER BY total DESC
+	`, tz, monthStr, monthStr, monthStr).Scan(&results).Error
+	return results, err
+}
+
+// FindSubcategoryExpenseTotalsForMonth returns each subcategory's expense total
+// for one calendar month, largest first. Mirrors FindCategoryExpenseTotalsForMonth
+// but subcategory_id is nullable, so it LEFT JOINs and folds transactions with no
+// subcategory into a "(none)" bucket. Soft-deleted subcategories stay visible,
+// relabeled with " (deleted)".
+func (r *transactionsRepository) FindSubcategoryExpenseTotalsForMonth(month time.Time) ([]SubcategoryMonthTotal, error) {
+	var results []SubcategoryMonthTotal
+	tz := r.loc.String()
+	monthStr := month.Format("2006-01-02")
+	err := r.db.Raw(`
+		WITH activity AS (
+			SELECT t.subcategory_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = false
+			  AND t.type = 'expense'
+			  AND t.date IS NOT NULL
+			  AND t.deleted_at IS NULL
+			  AND t.prepaid_from_id IS NULL
+			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
+			UNION ALL
+			SELECT t.subcategory_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = true
+			  AND t.type = 'expense'
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (?::date + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
+		)
+		SELECT COALESCE(CASE WHEN s.deleted_at IS NOT NULL THEN s.name || ' (deleted)' ELSE s.name END, '(none)') AS subcategory_name,
+		       SUM(a.amount) AS total
+		FROM activity a
+		LEFT JOIN subcategories s ON s.id = a.subcategory_id
+		GROUP BY s.name, s.deleted_at
+		ORDER BY total DESC
+	`, tz, monthStr, monthStr, monthStr).Scan(&results).Error
+	return results, err
+}
+
+// FindLocationExpenseTotalsForMonth returns each location's expense total for one
+// calendar month, largest first. Mirrors FindCategoryExpenseTotalsForMonth but
+// location_id is nullable, so it LEFT JOINs and folds transactions with no
+// location into a "(none)" bucket. Soft-deleted locations stay visible, relabeled
+// with " (deleted)".
+func (r *transactionsRepository) FindLocationExpenseTotalsForMonth(month time.Time) ([]LocationMonthTotal, error) {
+	var results []LocationMonthTotal
+	tz := r.loc.String()
+	monthStr := month.Format("2006-01-02")
+	err := r.db.Raw(`
+		WITH activity AS (
+			SELECT t.location_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = false
+			  AND t.type = 'expense'
+			  AND t.date IS NOT NULL
+			  AND t.deleted_at IS NULL
+			  AND t.prepaid_from_id IS NULL
+			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
+			UNION ALL
+			SELECT t.location_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = true
+			  AND t.type = 'expense'
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (?::date + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
+		)
+		SELECT COALESCE(CASE WHEN l.deleted_at IS NOT NULL THEN l.name || ' (deleted)' ELSE l.name END, '(none)') AS location_name,
+		       SUM(a.amount) AS total
+		FROM activity a
+		LEFT JOIN locations l ON l.id = a.location_id
+		GROUP BY l.name, l.deleted_at
 		ORDER BY total DESC
 	`, tz, monthStr, monthStr, monthStr).Scan(&results).Error
 	return results, err
