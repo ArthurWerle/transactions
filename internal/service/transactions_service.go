@@ -55,6 +55,8 @@ type TransactionsService interface {
 	GetCategoryHistory(ctx context.Context, startDate, endDate time.Time, categoryIDs []uint) ([]CategoryHistorySeries, error)
 	GetMonthOverview(ctx context.Context, month, year int) (*MonthOverview, error)
 	GetMonthlyExpensesByCategory(ctx context.Context, month, year int) ([]CategoryMonthExpense, error)
+	GetMonthlyExpensesBySubcategory(ctx context.Context, month, year int) ([]SubcategoryMonthExpense, error)
+	GetMonthlyExpensesByLocation(ctx context.Context, month, year int) ([]LocationMonthExpense, error)
 	PrepayTransaction(ctx context.Context, id uint) (*PrepayResult, error)
 	GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error)
 }
@@ -653,6 +655,50 @@ func (s *transactionsService) GetMonthlyExpensesByCategory(ctx context.Context, 
 	result := make([]CategoryMonthExpense, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, CategoryMonthExpense{CategoryName: row.CategoryName, Total: row.Total})
+	}
+	return result, nil
+}
+
+type SubcategoryMonthExpense struct {
+	SubcategoryName string  `json:"subcategory_name"`
+	Total           float64 `json:"total"`
+}
+
+// GetMonthlyExpensesBySubcategory returns each subcategory's expense total for
+// the month, largest first. Transactions with no subcategory are grouped under
+// "(none)".
+func (s *transactionsService) GetMonthlyExpensesBySubcategory(ctx context.Context, month, year int) ([]SubcategoryMonthExpense, error) {
+	target := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, s.loc)
+	rows, err := s.transactionRepo.FindSubcategoryExpenseTotalsForMonth(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch subcategory totals: %w", err)
+	}
+
+	result := make([]SubcategoryMonthExpense, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, SubcategoryMonthExpense{SubcategoryName: row.SubcategoryName, Total: row.Total})
+	}
+	return result, nil
+}
+
+type LocationMonthExpense struct {
+	LocationName string  `json:"location_name"`
+	Total        float64 `json:"total"`
+}
+
+// GetMonthlyExpensesByLocation returns each location's expense total for the
+// month, largest first. Transactions with no location are grouped under
+// "(none)".
+func (s *transactionsService) GetMonthlyExpensesByLocation(ctx context.Context, month, year int) ([]LocationMonthExpense, error) {
+	target := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, s.loc)
+	rows, err := s.transactionRepo.FindLocationExpenseTotalsForMonth(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch location totals: %w", err)
+	}
+
+	result := make([]LocationMonthExpense, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, LocationMonthExpense{LocationName: row.LocationName, Total: row.Total})
 	}
 	return result, nil
 }

@@ -793,6 +793,46 @@ func (h *TransactionHandler) GetMonthlyExpensesByCategory(c *gin.Context) {
 	})
 }
 
+func (h *TransactionHandler) GetMonthlyExpensesBySubcategory(c *gin.Context) {
+	month, year, ok := h.parseMonthYearParams(c)
+	if !ok {
+		return
+	}
+
+	totals, err := h.transactionService.GetMonthlyExpensesBySubcategory(c.Request.Context(), month, year)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch monthly expenses by subcategory",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"subcategories": totals,
+	})
+}
+
+func (h *TransactionHandler) GetMonthlyExpensesByLocation(c *gin.Context) {
+	month, year, ok := h.parseMonthYearParams(c)
+	if !ok {
+		return
+	}
+
+	totals, err := h.transactionService.GetMonthlyExpensesByLocation(c.Request.Context(), month, year)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch monthly expenses by location",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"locations": totals,
+	})
+}
+
 func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 	window := 0
 	if w := c.Query("window"); w != "" {

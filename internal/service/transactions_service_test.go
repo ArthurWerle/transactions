@@ -13,18 +13,20 @@ import (
 )
 
 type mockTransactionsRepository struct {
-	transactions        map[uint]*model.Transaction
-	created             []*model.Transaction
-	nonRecurringSums    []repository.CategoryExpenseSummary
-	recurringExpenses   []repository.RecurringCategoryExpense
-	earliestDate        *time.Time
-	monthlyTotals       []repository.MonthlyTypeTotal
-	recurringByType     []repository.RecurringTypeTransaction
-	incomeTotal         float64
-	recurringIncomes    []repository.RecurringAmount
-	monthlyFlow         []repository.MonthlyFlowRow
-	categoryFlow        []repository.CategoryMonthlyFlowRow
-	categoryMonthTotals []repository.CategoryMonthTotal
+	transactions           map[uint]*model.Transaction
+	created                []*model.Transaction
+	nonRecurringSums       []repository.CategoryExpenseSummary
+	recurringExpenses      []repository.RecurringCategoryExpense
+	earliestDate           *time.Time
+	monthlyTotals          []repository.MonthlyTypeTotal
+	recurringByType        []repository.RecurringTypeTransaction
+	incomeTotal            float64
+	recurringIncomes       []repository.RecurringAmount
+	monthlyFlow            []repository.MonthlyFlowRow
+	categoryFlow           []repository.CategoryMonthlyFlowRow
+	categoryMonthTotals    []repository.CategoryMonthTotal
+	subcategoryMonthTotals []repository.SubcategoryMonthTotal
+	locationMonthTotals    []repository.LocationMonthTotal
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -97,6 +99,14 @@ func (m *mockTransactionsRepository) FindCategoryMonthlyFlow(startMonth, endMont
 
 func (m *mockTransactionsRepository) FindCategoryExpenseTotalsForMonth(month time.Time) ([]repository.CategoryMonthTotal, error) {
 	return m.categoryMonthTotals, nil
+}
+
+func (m *mockTransactionsRepository) FindSubcategoryExpenseTotalsForMonth(month time.Time) ([]repository.SubcategoryMonthTotal, error) {
+	return m.subcategoryMonthTotals, nil
+}
+
+func (m *mockTransactionsRepository) FindLocationExpenseTotalsForMonth(month time.Time) ([]repository.LocationMonthTotal, error) {
+	return m.locationMonthTotals, nil
 }
 
 func (m *mockTransactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {
