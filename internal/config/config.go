@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 type Config struct {
@@ -11,6 +12,22 @@ type Config struct {
 	Log       LogConfig
 	Reporting ReportingConfig
 	Identity  IdentityConfig
+	Insights  InsightsConfig
+}
+
+type InsightsConfig struct {
+	// EventsBaseURL is the events service address on the internal docker
+	// network. Empty disables insight rebuild notifications entirely.
+	EventsBaseURL string
+	// RebuildCallbackURL is where the events service delivers the
+	// rebuild-spending-insights job (ai-internal's GET /insights/rebuild).
+	RebuildCallbackURL string
+	// SignificantAmount is the absolute expense amount at which a new
+	// transaction invalidates the cached spending insight.
+	SignificantAmount float64
+	// SignificantMonthPercent invalidates when a new expense alone represents
+	// at least this percentage of the current month's total expenses.
+	SignificantMonthPercent float64
 }
 
 type IdentityConfig struct {
@@ -65,6 +82,12 @@ func Load() (*Config, error) {
 		Identity: IdentityConfig{
 			BaseURL: getEnv("IDENTITY_BASE_URL", "http://identity:8080"),
 		},
+		Insights: InsightsConfig{
+			EventsBaseURL:           getEnv("EVENTS_BASE_URL", ""),
+			RebuildCallbackURL:      getEnv("INSIGHTS_REBUILD_CALLBACK_URL", "http://ai-internal:3005/insights/rebuild"),
+			SignificantAmount:       getEnvFloat("INSIGHTS_SIGNIFICANT_AMOUNT", 100),
+			SignificantMonthPercent: getEnvFloat("INSIGHTS_SIGNIFICANT_MONTH_PERCENT", 5),
+		},
 	}
 
 	return cfg, nil
@@ -80,6 +103,15 @@ func (c *DatabaseConfig) DSN() string {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
 	}
 	return defaultValue
 }

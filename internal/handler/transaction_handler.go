@@ -17,14 +17,16 @@ type TransactionHandler struct {
 	transactionService service.TransactionsService
 	locationService    service.LocationService
 	identityClient     service.IdentityClient
+	insightsNotifier   service.InsightsNotifier
 	loc                *time.Location
 }
 
-func NewTransactionHandler(transactionService service.TransactionsService, locationService service.LocationService, identityClient service.IdentityClient, loc *time.Location) *TransactionHandler {
+func NewTransactionHandler(transactionService service.TransactionsService, locationService service.LocationService, identityClient service.IdentityClient, insightsNotifier service.InsightsNotifier, loc *time.Location) *TransactionHandler {
 	return &TransactionHandler{
 		transactionService: transactionService,
 		locationService:    locationService,
 		identityClient:     identityClient,
+		insightsNotifier:   insightsNotifier,
 		loc:                loc,
 	}
 }
@@ -162,6 +164,12 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 	if err := h.transactionService.CreateTransaction(c.Request.Context(), transaction); err != nil {
 		respondTransactionError(c, err, "Failed to create transaction")
 		return
+	}
+
+	// Fire-and-forget: a significant expense invalidates the cached AI
+	// spending insight via the events queue.
+	if h.insightsNotifier != nil {
+		h.insightsNotifier.TransactionCreated(transaction)
 	}
 
 	c.JSON(http.StatusCreated, gin.H{

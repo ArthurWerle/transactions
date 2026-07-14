@@ -37,6 +37,11 @@ services:
       SERVER_PORT: ${SERVER_PORT}
       LOG_LEVEL: ${LOG_LEVEL}
       IDENTITY_BASE_URL: ${IDENTITY_BASE_URL:-http://identity-staging:8080}
+      # Insight cache invalidation: empty EVENTS_BASE_URL disables it.
+      EVENTS_BASE_URL: ${EVENTS_BASE_URL:-}
+      INSIGHTS_REBUILD_CALLBACK_URL: ${INSIGHTS_REBUILD_CALLBACK_URL:-http://ai-internal:3005/insights/rebuild}
+      INSIGHTS_SIGNIFICANT_AMOUNT: ${INSIGHTS_SIGNIFICANT_AMOUNT:-100}
+      INSIGHTS_SIGNIFICANT_MONTH_PERCENT: ${INSIGHTS_SIGNIFICANT_MONTH_PERCENT:-5}
     ports:
       - "${SERVICE_PORT}:${SERVER_PORT}"
     depends_on:
