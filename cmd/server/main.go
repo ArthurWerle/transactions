@@ -61,7 +61,8 @@ func main() {
 
 	transactionRepo := repository.NewTransactionsRepository(db, reportingLoc)
 	transactionService := service.NewTransactionsService(transactionRepo, reportingLoc)
-	transactionHandler := handler.NewTransactionHandler(transactionService, locationService, identityClient, reportingLoc)
+	insightsNotifier := service.NewInsightsNotifier(cfg.Insights, transactionService, logger)
+	transactionHandler := handler.NewTransactionHandler(transactionService, locationService, identityClient, insightsNotifier, reportingLoc)
 
 	categoryRepo := repository.NewCategoryRepository(db)
 	categoryService := service.NewCategoryService(categoryRepo)
