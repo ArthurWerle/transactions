@@ -65,12 +65,12 @@ func (h *TransactionHandler) resolveLocation(c *gin.Context, name *string) (*uin
 }
 
 type CreateTransactionRequest struct {
-	IsRecurring   bool  `json:"is_recurring"`
-	CategoryID    *uint `json:"category_id,omitempty"`
-	SubcategoryID *uint `json:"subcategory_id,omitempty"`
-	CreatedById   uint  `json:"created_by_id"`
-	Amount      float64 `json:"amount" binding:"required"`
-	Type        string  `json:"type" binding:"required"`
+	IsRecurring   bool    `json:"is_recurring"`
+	CategoryID    *uint   `json:"category_id,omitempty"`
+	SubcategoryID *uint   `json:"subcategory_id,omitempty"`
+	CreatedById   uint    `json:"created_by_id"`
+	Amount        float64 `json:"amount" binding:"required"`
+	Type          string  `json:"type" binding:"required"`
 	// Deprecated: do not use. Will be removed.
 	Subtype     *string `json:"subtype,omitempty"`
 	Origin      string  `json:"origin,omitempty"`
@@ -110,12 +110,12 @@ func (h *TransactionHandler) CreateTransaction(c *gin.Context) {
 		CategoryID:    *req.CategoryID,
 		SubcategoryID: req.SubcategoryID,
 		CreatedById:   req.CreatedById,
-		Amount:      req.Amount,
-		Type:        req.Type,
-		Subtype:     req.Subtype,
-		Origin:      req.Origin,
-		Description: req.Description,
-		Frequency:   req.Frequency,
+		Amount:        req.Amount,
+		Type:          req.Type,
+		Subtype:       req.Subtype,
+		Origin:        req.Origin,
+		Description:   req.Description,
+		Frequency:     req.Frequency,
 	}
 
 	// Parse dates if provided
@@ -237,7 +237,11 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 	}
 
 	var categoryIDs []uint
-	if categoryStr := c.Query("category"); categoryStr != "" {
+	categoryStr := c.Query("category")
+	if categoryStr == "" {
+		categoryStr = c.Query("category_id")
+	}
+	if categoryStr != "" {
 		categoryParts := strings.Split(categoryStr, ",")
 		for _, part := range categoryParts {
 			categoryID, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32)
@@ -409,19 +413,19 @@ func (h *TransactionHandler) GetBiggestTransactions(c *gin.Context) {
 }
 
 type UpdateTransactionRequest struct {
-	IsRecurring   *bool `json:"is_recurring,omitempty"`
-	CategoryID    *uint `json:"category_id,omitempty"`
-	SubcategoryID *uint `json:"subcategory_id,omitempty"`
-	Amount      *float64 `json:"amount,omitempty"`
-	Type        *string  `json:"type,omitempty"`
+	IsRecurring   *bool    `json:"is_recurring,omitempty"`
+	CategoryID    *uint    `json:"category_id,omitempty"`
+	SubcategoryID *uint    `json:"subcategory_id,omitempty"`
+	Amount        *float64 `json:"amount,omitempty"`
+	Type          *string  `json:"type,omitempty"`
 	// Deprecated: do not use. Will be removed.
-	Subtype     *string  `json:"subtype,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Date        *string  `json:"date,omitempty"`
-	Frequency   *string  `json:"frequency,omitempty"`
-	StartDate   *string  `json:"start_date,omitempty"`
-	EndDate     *string  `json:"end_date,omitempty"`
-	Location    *string  `json:"location,omitempty"`
+	Subtype     *string `json:"subtype,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Date        *string `json:"date,omitempty"`
+	Frequency   *string `json:"frequency,omitempty"`
+	StartDate   *string `json:"start_date,omitempty"`
+	EndDate     *string `json:"end_date,omitempty"`
+	Location    *string `json:"location,omitempty"`
 }
 
 func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
@@ -729,7 +733,11 @@ func (h *TransactionHandler) GetCategoryHistory(c *gin.Context) {
 	}
 
 	var categoryIDs []uint
-	if categoryStr := c.Query("category"); categoryStr != "" {
+	categoryStr := c.Query("category")
+	if categoryStr == "" {
+		categoryStr = c.Query("category_id")
+	}
+	if categoryStr != "" {
 		for _, part := range strings.Split(categoryStr, ",") {
 			id, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32)
 			if err != nil {
@@ -862,7 +870,6 @@ func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 		"averageByType": result,
 	})
 }
-
 
 func (h *TransactionHandler) GetAverageByCategory(c *gin.Context) {
 	var startDate, endDate *time.Time
