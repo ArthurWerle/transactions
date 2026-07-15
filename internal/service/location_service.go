@@ -56,6 +56,13 @@ func (s *locationService) FindOrCreate(ctx context.Context, name string) (*model
 		NormalizedName: normalized,
 	}
 	if err := s.locationRepo.Create(location); err != nil {
+		// Concurrent requests for the same new location can both pass the
+		// lookup above and race on the insert; the unique index on
+		// normalized_name rejects the losers. Treat that as "found" and
+		// return the row the winning request created.
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return s.locationRepo.FindByNormalizedName(normalized)
+		}
 		return nil, err
 	}
 	return location, nil
