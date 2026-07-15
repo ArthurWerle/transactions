@@ -115,6 +115,40 @@ func TestFindOrCreate_CreatesDistinctNames(t *testing.T) {
 	}
 }
 
+// raceyLocationRepository simulates a concurrent request winning the insert
+// between our lookup and our create: the first FindByNormalizedName misses,
+// then Create fails with the unique-index error, and subsequent lookups find
+// the row the "other" request inserted.
+type raceyLocationRepository struct {
+	*mockLocationRepository
+	winner *model.Location
+}
+
+func (r *raceyLocationRepository) FindByNormalizedName(normalizedName string) (*model.Location, error) {
+	return r.mockLocationRepository.FindByNormalizedName(normalizedName)
+}
+
+func (r *raceyLocationRepository) Create(location *model.Location) error {
+	// The concurrent winner lands right before our insert.
+	r.winner = &model.Location{Name: location.Name, NormalizedName: location.NormalizedName}
+	r.winner.ID = 42
+	r.mockLocationRepository.locations[r.winner.ID] = r.winner
+	return gorm.ErrDuplicatedKey
+}
+
+func TestFindOrCreate_RecoversFromDuplicateKeyRace(t *testing.T) {
+	repo := &raceyLocationRepository{mockLocationRepository: newMockLocationRepository()}
+	svc := NewLocationService(repo)
+
+	got, err := svc.FindOrCreate(context.Background(), "SUPERMERCADO BROMBATTI")
+	if err != nil {
+		t.Fatalf("expected duplicate-key race to be recovered, got error: %v", err)
+	}
+	if got.ID != repo.winner.ID {
+		t.Errorf("expected the concurrently created location (id=%d), got id=%d", repo.winner.ID, got.ID)
+	}
+}
+
 func TestFindOrCreate_RejectsEmptyName(t *testing.T) {
 	svc := NewLocationService(newMockLocationRepository())
 	if _, err := svc.FindOrCreate(context.Background(), "   "); err == nil {
