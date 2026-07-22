@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ArthurWerle/transactions/internal/config"
@@ -157,12 +159,18 @@ func (n *eventsInsightsNotifier) enqueueRebuild(ctx context.Context, tx *model.T
 
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return fmt.Errorf("POST %s/api/events failed: %w", n.cfg.EventsBaseURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		// Include a bounded snippet of the response body so a rejected enqueue
+		// is debuggable instead of a bare status code.
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if body := strings.TrimSpace(string(snippet)); body != "" {
+			return fmt.Errorf("POST %s/api/events returned %d: %s", n.cfg.EventsBaseURL, resp.StatusCode, body)
+		}
+		return fmt.Errorf("POST %s/api/events returned %d", n.cfg.EventsBaseURL, resp.StatusCode)
 	}
 	return nil
 }
