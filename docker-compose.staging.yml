@@ -44,6 +44,11 @@ services:
       INSIGHTS_SIGNIFICANT_MONTH_PERCENT: ${INSIGHTS_SIGNIFICANT_MONTH_PERCENT:-5}
     ports:
       - "${SERVICE_PORT}:${SERVER_PORT}"
+    labels:
+      prometheus.io/scrape: "true"
+      prometheus.io/hostport: "${SERVICE_PORT}"
+      prometheus.io/path: "/metrics"
+      environment: "staging"
     depends_on:
       postgres:
         condition: service_healthy
