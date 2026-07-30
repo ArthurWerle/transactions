@@ -13,11 +13,13 @@ import (
 
 	"github.com/ArthurWerle/transactions/internal/config"
 	"github.com/ArthurWerle/transactions/internal/handler"
+	"github.com/ArthurWerle/transactions/internal/middleware"
 	"github.com/ArthurWerle/transactions/internal/migrations"
 	"github.com/ArthurWerle/transactions/internal/repository"
 	"github.com/ArthurWerle/transactions/internal/service"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
@@ -120,6 +122,12 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}))
+
+	// Record request count and latency for every route.
+	router.Use(middleware.Metrics())
+
+	// Prometheus scrape endpoint.
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
