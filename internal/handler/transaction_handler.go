@@ -538,6 +538,13 @@ func (h *TransactionHandler) UpdateTransaction(c *gin.Context) {
 		return
 	}
 
+	// Reload so the response carries fresh belongs-to associations
+	// (subcategory, location) matching the just-saved foreign keys instead of
+	// the stale ones preloaded before the update.
+	if reloaded, err := h.transactionService.GetTransactionByID(c.Request.Context(), id); err == nil {
+		transaction = reloaded
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":     "Transaction updated successfully",
 		"transaction": transaction,

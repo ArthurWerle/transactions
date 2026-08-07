@@ -87,6 +87,15 @@ func seedRecurring(t *testing.T, db *gorm.DB, catID uint, txType string, amount 
 	return tx
 }
 
+func seedSubcategory(t *testing.T, db *gorm.DB, name string) *model.Subcategory {
+	t.Helper()
+	s := &model.Subcategory{Name: name}
+	if err := db.Create(s).Error; err != nil {
+		t.Fatalf("failed to seed subcategory: %v", err)
+	}
+	return s
+}
+
 func TestIntegration_PeriodPredicateBoundaries(t *testing.T) {
 	db := setupIntegrationDB(t)
 	repo := NewTransactionsRepository(db, saoPaulo)
@@ -236,4 +245,67 @@ func TestIntegration_DuplicateCategoryTranslatesError(t *testing.T) {
 func datePtrAt(year int, month time.Month, day int) *time.Time {
 	d := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 	return &d
+}
+
+// TestIntegration_UpdatePersistsSubcategoryChange guards against the GORM
+// auto-save-associations gotcha: FindByID preloads the belongs-to Subcategory,
+// and a plain Save would upsert that stale association and overwrite
+// subcategory_id back to its old value. Update must persist the new FK.
+func TestIntegration_UpdatePersistsSubcategoryChange(t *testing.T) {
+	db := setupIntegrationDB(t)
+	repo := NewTransactionsRepository(db, saoPaulo)
+	cat := seedCategory(t, db, "Groceries")
+	subA := seedSubcategory(t, db, "Old sub")
+	subB := seedSubcategory(t, db, "New sub")
+	// Stable expected values, never handed out as pointers: a buggy Update
+	// that clobbers the FK writes *through* the pointer we pass, so any uint
+	// used as a pointer target can be mutated out from under us.
+	wantOld, wantNew := subA.ID, subB.ID
+
+	tx := seedOneOff(t, db, cat.ID, "expense", 42, time.Date(2026, 7, 3, 14, 0, 0, 0, saoPaulo))
+	oldPtr := subA.ID
+	tx.SubcategoryID = &oldPtr
+	if err := repo.Update(tx); err != nil {
+		t.Fatalf("initial Update: %v", err)
+	}
+
+	// Reload the way the handler does — this preloads the stale Subcategory
+	// association that used to clobber the foreign key on Save.
+	loaded, err := repo.FindByID(tx.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if loaded.SubcategoryID == nil || *loaded.SubcategoryID != wantOld {
+		t.Fatalf("setup: expected subcategory %d, got %v", wantOld, loaded.SubcategoryID)
+	}
+
+	// Change only the foreign key, leaving the preloaded association untouched.
+	newPtr := subB.ID
+	loaded.SubcategoryID = &newPtr
+	if err := repo.Update(loaded); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Ground truth: the persisted column, independent of any preload.
+	var rawFK *uint
+	if err := db.Raw("SELECT subcategory_id FROM transactions WHERE id = ?", tx.ID).Scan(&rawFK).Error; err != nil {
+		t.Fatalf("raw subcategory_id read: %v", err)
+	}
+	if rawFK == nil {
+		t.Fatalf("subcategory change did not persist in DB: want %d, got NULL", wantNew)
+	}
+	if *rawFK != wantNew {
+		t.Fatalf("subcategory change did not persist in DB: want %d, got %d", wantNew, *rawFK)
+	}
+
+	after, err := repo.FindByID(tx.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
+	if after.SubcategoryID == nil || *after.SubcategoryID != wantNew {
+		t.Fatalf("subcategory change did not persist: want %d, got %v", wantNew, after.SubcategoryID)
+	}
+	if after.Subcategory == nil || after.Subcategory.Name != "New sub" {
+		t.Errorf("preloaded subcategory should reflect the new value, got %+v", after.Subcategory)
+	}
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/ArthurWerle/transactions/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type CategoryExpenseSummary struct {
@@ -249,8 +250,15 @@ func (r *transactionsRepository) FindBiggest(month, year int) ([]model.Transacti
 	return transactions, err
 }
 
+// Update persists the transaction's own columns. It omits associations on
+// purpose: the caller resolves foreign keys explicitly (subcategory_id,
+// location_id), while the belongs-to structs (Subcategory, Location) are just
+// read projections preloaded by FindByID. Without this Omit, GORM's auto-save
+// of associations would upsert the stale preloaded association and overwrite
+// the foreign key back to its old value — silently discarding edits to
+// subcategory/location.
 func (r *transactionsRepository) Update(transaction *model.Transaction) error {
-	return r.db.Save(transaction).Error
+	return r.db.Omit(clause.Associations).Save(transaction).Error
 }
 
 func (r *transactionsRepository) Delete(id uint) error {
