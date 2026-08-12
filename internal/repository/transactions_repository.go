@@ -72,6 +72,18 @@ type LocationMonthTotal struct {
 	Total        float64 `gorm:"column:total"`
 }
 
+type DailyExpenseTotal struct {
+	Day   time.Time `gorm:"column:day"`
+	Total float64   `gorm:"column:total"`
+}
+
+type MerchantMonthTotal struct {
+	Name             string  `gorm:"column:name"`
+	Total            float64 `gorm:"column:total"`
+	TransactionCount int64   `gorm:"column:transaction_count"`
+	TopCategory      string  `gorm:"column:top_category"`
+}
+
 type TransactionsRepository interface {
 	Create(transaction *model.Transaction) error
 	FindByID(id uint) (*model.Transaction, error)
@@ -90,6 +102,8 @@ type TransactionsRepository interface {
 	FindCategoryExpenseTotalsForMonth(month time.Time) ([]CategoryMonthTotal, error)
 	FindSubcategoryExpenseTotalsForMonth(month time.Time) ([]SubcategoryMonthTotal, error)
 	FindLocationExpenseTotalsForMonth(month time.Time) ([]LocationMonthTotal, error)
+	FindDailyExpenseTotalsForMonth(month time.Time) ([]DailyExpenseTotal, int64, error)
+	FindMerchantExpenseTotalsForMonth(month time.Time) ([]MerchantMonthTotal, error)
 	FindEarliestDate(startDate, endDate *time.Time) (*time.Time, error)
 	FindExpenseSummaryByCategory(startDate, endDate *time.Time) ([]CategoryExpenseSummary, error)
 	FindRecurringExpensesInRange(startDate, endDate *time.Time) ([]RecurringCategoryExpense, error)
@@ -471,6 +485,130 @@ func (r *transactionsRepository) FindLocationExpenseTotalsForMonth(month time.Ti
 		LEFT JOIN locations l ON l.id = a.location_id
 		GROUP BY l.name, l.deleted_at
 		ORDER BY total DESC
+	`, tz, monthStr, monthStr, monthStr).Scan(&results).Error
+	return results, err
+}
+
+// FindDailyExpenseTotalsForMonth returns one zero-filled row per calendar day of
+// the month with that day's expense total, plus the month's expense transaction
+// count. One-off expenses bucket by their reporting-timezone calendar day;
+// each recurring expense schedule active in the month is attributed to a single
+// day (its start_date day-of-month, clamped to the month's length), so the daily
+// sum reconciles with the monthly total. Prepayment rows are excluded.
+func (r *transactionsRepository) FindDailyExpenseTotalsForMonth(month time.Time) ([]DailyExpenseTotal, int64, error) {
+	var results []DailyExpenseTotal
+	tz := r.loc.String()
+	monthStr := month.Format("2006-01-02")
+	err := r.db.Raw(`
+		WITH days AS (
+			SELECT generate_series(?::date, (?::date + interval '1 month - 1 day')::date, interval '1 day')::date AS day
+		),
+		activity AS (
+			SELECT date_trunc('day', t.date AT TIME ZONE ?)::date AS day, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = false
+			  AND t.type = 'expense'
+			  AND t.date IS NOT NULL
+			  AND t.deleted_at IS NULL
+			  AND t.prepaid_from_id IS NULL
+			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
+			UNION ALL
+			SELECT (?::date + (LEAST(
+			            EXTRACT(day FROM t.start_date)::int,
+			            EXTRACT(day FROM (?::date + interval '1 month - 1 day'))::int
+			        ) - 1) * interval '1 day')::date AS day,
+			       t.amount
+			FROM transactions t
+			WHERE t.is_recurring = true
+			  AND t.type = 'expense'
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (?::date + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
+		)
+		SELECT d.day, COALESCE(SUM(a.amount), 0) AS total
+		FROM days d
+		LEFT JOIN activity a ON a.day = d.day
+		GROUP BY d.day
+		ORDER BY d.day
+	`, monthStr, monthStr, tz, tz, monthStr, monthStr, monthStr, monthStr, monthStr).Scan(&results).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var count int64
+	err = r.db.Raw(`
+		SELECT
+		  (SELECT COUNT(*) FROM transactions t
+		     WHERE t.is_recurring = false AND t.type = 'expense' AND t.date IS NOT NULL
+		       AND t.deleted_at IS NULL AND t.prepaid_from_id IS NULL
+		       AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date)
+		  +
+		  (SELECT COUNT(*) FROM transactions t
+		     WHERE t.is_recurring = true AND t.type = 'expense' AND t.deleted_at IS NULL
+		       AND t.start_date < (?::date + interval '1 month')::date
+		       AND (t.end_date IS NULL OR t.end_date >= ?::date)) AS count
+	`, tz, monthStr, monthStr, monthStr).Scan(&count).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return results, count, nil
+}
+
+// FindMerchantExpenseTotalsForMonth returns each location's expense total for the
+// month with its transaction count and dominant category (the category with the
+// largest spend at that location that month), largest total first. Merchant =
+// location; transactions with no location fold into "(none)". Mirrors the
+// activity CTE used by the other month aggregations (one-off dated + recurring
+// active, prepaid excluded, tz-aware). Soft-deleted names are labelled.
+func (r *transactionsRepository) FindMerchantExpenseTotalsForMonth(month time.Time) ([]MerchantMonthTotal, error) {
+	var results []MerchantMonthTotal
+	tz := r.loc.String()
+	monthStr := month.Format("2006-01-02")
+	err := r.db.Raw(`
+		WITH activity AS (
+			SELECT t.location_id, t.category_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = false
+			  AND t.type = 'expense'
+			  AND t.date IS NOT NULL
+			  AND t.deleted_at IS NULL
+			  AND t.prepaid_from_id IS NULL
+			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
+			UNION ALL
+			SELECT t.location_id, t.category_id, t.amount
+			FROM transactions t
+			WHERE t.is_recurring = true
+			  AND t.type = 'expense'
+			  AND t.deleted_at IS NULL
+			  AND t.start_date < (?::date + interval '1 month')::date
+			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
+		),
+		per_loc AS (
+			SELECT location_id, SUM(amount) AS total, COUNT(*) AS transaction_count
+			FROM activity
+			GROUP BY location_id
+		),
+		per_loc_cat AS (
+			SELECT location_id, category_id,
+			       ROW_NUMBER() OVER (PARTITION BY location_id ORDER BY SUM(amount) DESC, category_id) AS rn
+			FROM activity
+			GROUP BY location_id, category_id
+		),
+		top_cat AS (
+			SELECT plc.location_id,
+			       CASE WHEN c.deleted_at IS NOT NULL THEN c.name || ' (deleted)' ELSE c.name END AS top_category
+			FROM per_loc_cat plc
+			LEFT JOIN categories c ON c.id = plc.category_id
+			WHERE plc.rn = 1
+		)
+		SELECT COALESCE(CASE WHEN l.deleted_at IS NOT NULL THEN l.name || ' (deleted)' ELSE l.name END, '(none)') AS name,
+		       pl.total,
+		       pl.transaction_count,
+		       COALESCE(tc.top_category, '') AS top_category
+		FROM per_loc pl
+		LEFT JOIN locations l ON l.id = pl.location_id
+		LEFT JOIN top_cat tc ON tc.location_id IS NOT DISTINCT FROM pl.location_id
+		ORDER BY pl.total DESC
 	`, tz, monthStr, monthStr, monthStr).Scan(&results).Error
 	return results, err
 }

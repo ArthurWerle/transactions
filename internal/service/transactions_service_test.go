@@ -27,6 +27,9 @@ type mockTransactionsRepository struct {
 	categoryMonthTotals    []repository.CategoryMonthTotal
 	subcategoryMonthTotals []repository.SubcategoryMonthTotal
 	locationMonthTotals    []repository.LocationMonthTotal
+	dailyExpenseTotals     []repository.DailyExpenseTotal
+	dailyExpenseCount      int64
+	merchantMonthTotals    []repository.MerchantMonthTotal
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -107,6 +110,14 @@ func (m *mockTransactionsRepository) FindSubcategoryExpenseTotalsForMonth(month 
 
 func (m *mockTransactionsRepository) FindLocationExpenseTotalsForMonth(month time.Time) ([]repository.LocationMonthTotal, error) {
 	return m.locationMonthTotals, nil
+}
+
+func (m *mockTransactionsRepository) FindDailyExpenseTotalsForMonth(month time.Time) ([]repository.DailyExpenseTotal, int64, error) {
+	return m.dailyExpenseTotals, m.dailyExpenseCount, nil
+}
+
+func (m *mockTransactionsRepository) FindMerchantExpenseTotalsForMonth(month time.Time) ([]repository.MerchantMonthTotal, error) {
+	return m.merchantMonthTotals, nil
 }
 
 func (m *mockTransactionsRepository) FindByPrepaidID(prepaidID uint) (*model.Transaction, error) {

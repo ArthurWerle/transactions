@@ -244,3 +244,58 @@ func TestGetMonthlyExpensesByLocation(t *testing.T) {
 		t.Errorf("expected the (none) bucket preserved, got %+v", got[1])
 	}
 }
+
+func TestGetMonthlyDailyExpenses_FormatsDaysAndSumsTotal(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	// The repository already zero-fills every day; the service formats each
+	// day's date and sums the totals (which reconcile with the monthly total).
+	repo.dailyExpenseTotals = []repository.DailyExpenseTotal{
+		{Day: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), Total: 10},
+		{Day: time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC), Total: 0},
+		{Day: time.Date(2026, 6, 3, 0, 0, 0, 0, time.UTC), Total: 25.5},
+	}
+	repo.dailyExpenseCount = 7
+
+	got, err := svc.GetMonthlyDailyExpenses(context.Background(), 6, 2026)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Days) != 3 {
+		t.Fatalf("expected 3 days, got %d", len(got.Days))
+	}
+	if got.Days[0].Date != "2026-06-01" || got.Days[0].Total != 10 {
+		t.Errorf("unexpected first day: %+v", got.Days[0])
+	}
+	if got.TransactionCount != 7 {
+		t.Errorf("expected count 7, got %d", got.TransactionCount)
+	}
+	if got.Total != 35.5 {
+		t.Errorf("expected summed total 35.5, got %v", got.Total)
+	}
+}
+
+func TestGetMonthlyMerchants_PassesThroughRows(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+
+	repo.merchantMonthTotals = []repository.MerchantMonthTotal{
+		{Name: "Supermarket", Total: 400, TransactionCount: 12, TopCategory: "Groceries"},
+		{Name: "(none)", Total: 75, TransactionCount: 3, TopCategory: "Misc"},
+	}
+
+	got, err := svc.GetMonthlyMerchants(context.Background(), 6, 2026)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(got))
+	}
+	if got[0].Name != "Supermarket" || got[0].Total != 400 || got[0].TransactionCount != 12 || got[0].TopCategory != "Groceries" {
+		t.Errorf("unexpected first merchant: %+v", got[0])
+	}
+	if got[1].Name != "(none)" || got[1].TransactionCount != 3 {
+		t.Errorf("expected the (none) bucket preserved, got %+v", got[1])
+	}
+}
