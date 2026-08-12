@@ -856,6 +856,44 @@ func (h *TransactionHandler) GetMonthlyExpensesByLocation(c *gin.Context) {
 	})
 }
 
+func (h *TransactionHandler) GetMonthlyDailyExpenses(c *gin.Context) {
+	month, year, ok := h.parseMonthYearParams(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.transactionService.GetMonthlyDailyExpenses(c.Request.Context(), month, year)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch daily expenses",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *TransactionHandler) GetMonthlyMerchants(c *gin.Context) {
+	month, year, ok := h.parseMonthYearParams(c)
+	if !ok {
+		return
+	}
+
+	merchants, err := h.transactionService.GetMonthlyMerchants(c.Request.Context(), month, year)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to fetch monthly merchants",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"merchants": merchants,
+	})
+}
+
 func (h *TransactionHandler) GetAverageByType(c *gin.Context) {
 	window := 0
 	if w := c.Query("window"); w != "" {

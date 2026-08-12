@@ -226,6 +226,115 @@ func TestIntegration_CategoryMonthTotalsLabelDeleted(t *testing.T) {
 	}
 }
 
+func seedLocation(t *testing.T, db *gorm.DB, name string) *model.Location {
+	t.Helper()
+	l := &model.Location{Name: name, NormalizedName: name}
+	if err := db.Create(l).Error; err != nil {
+		t.Fatalf("failed to seed location: %v", err)
+	}
+	return l
+}
+
+func seedOneOffLoc(t *testing.T, db *gorm.DB, catID uint, locID *uint, amount float64, date time.Time) {
+	t.Helper()
+	tx := &model.Transaction{CategoryID: catID, LocationID: locID, Type: "expense", Amount: amount, Date: &date}
+	if err := db.Create(tx).Error; err != nil {
+		t.Fatalf("failed to seed located one-off: %v", err)
+	}
+}
+
+func TestIntegration_DailyExpenseTotalsForMonth(t *testing.T) {
+	db := setupIntegrationDB(t)
+	repo := NewTransactionsRepository(db, saoPaulo)
+	cat := seedCategory(t, db, "Daily")
+
+	// Two one-off expenses on June 3rd (BRT) → that day totals 150.
+	seedOneOff(t, db, cat.ID, "expense", 100, time.Date(2026, 6, 3, 14, 0, 0, 0, saoPaulo))
+	seedOneOff(t, db, cat.ID, "expense", 50, time.Date(2026, 6, 3, 18, 0, 0, 0, saoPaulo))
+	// Income must not count toward expenses.
+	seedOneOff(t, db, cat.ID, "income", 999, time.Date(2026, 6, 5, 12, 0, 0, 0, saoPaulo))
+	// Recurring day-15 schedule active in June → attributed to June 15.
+	seedRecurring(t, db, cat.ID, "expense", 200, time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC), nil)
+	// Recurring day-31 schedule → clamped to the last day of June (30th).
+	seedRecurring(t, db, cat.ID, "expense", 300, time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC), nil)
+	// Recurring starting after June must not appear.
+	seedRecurring(t, db, cat.ID, "expense", 70, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), nil)
+	// A prepayment lump is a cash record excluded from aggregates.
+	lumpDate := time.Date(2026, 6, 20, 12, 0, 0, 0, saoPaulo)
+	original := seedRecurring(t, db, cat.ID, "expense", 10, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), datePtrAt(2026, 1, 31))
+	lump := &model.Transaction{CategoryID: cat.ID, Type: "expense", Amount: 1500, Date: &lumpDate, PrepaidFromID: &original.ID}
+	if err := db.Create(lump).Error; err != nil {
+		t.Fatalf("failed to seed prepay lump: %v", err)
+	}
+
+	days, count, err := repo.FindDailyExpenseTotalsForMonth(time.Date(2026, 6, 1, 0, 0, 0, 0, saoPaulo))
+	if err != nil {
+		t.Fatalf("FindDailyExpenseTotalsForMonth: %v", err)
+	}
+	if len(days) != 30 {
+		t.Fatalf("June has 30 days (zero-filled), got %d", len(days))
+	}
+
+	byDay := map[int]float64{}
+	var sum float64
+	for _, d := range days {
+		byDay[d.Day.Day()] = d.Total
+		sum += d.Total
+	}
+	if byDay[3] != 150 {
+		t.Errorf("June 3 total = %v, expected 150", byDay[3])
+	}
+	if byDay[15] != 200 {
+		t.Errorf("June 15 total = %v, expected 200 (recurring day-15)", byDay[15])
+	}
+	if byDay[30] != 300 {
+		t.Errorf("June 30 total = %v, expected 300 (recurring day-31 clamped)", byDay[30])
+	}
+	if sum != 650 {
+		t.Errorf("daily sum = %v, expected 650 (income + prepay + future-recurring excluded)", sum)
+	}
+	// 2 one-off expenses + 2 active recurring expenses = 4.
+	if count != 4 {
+		t.Errorf("transaction_count = %d, expected 4", count)
+	}
+}
+
+func TestIntegration_MerchantExpenseTotalsForMonth(t *testing.T) {
+	db := setupIntegrationDB(t)
+	repo := NewTransactionsRepository(db, saoPaulo)
+	groceries := seedCategory(t, db, "Groceries")
+	coffee := seedCategory(t, db, "Coffee")
+	market := seedLocation(t, db, "Supermarket")
+	cafe := seedLocation(t, db, "Cafe")
+
+	// Supermarket: Groceries 300 (2 tx) + Coffee 10 (1 tx) → top category Groceries.
+	seedOneOffLoc(t, db, groceries.ID, &market.ID, 100, time.Date(2026, 6, 3, 12, 0, 0, 0, saoPaulo))
+	seedOneOffLoc(t, db, groceries.ID, &market.ID, 200, time.Date(2026, 6, 10, 12, 0, 0, 0, saoPaulo))
+	seedOneOffLoc(t, db, coffee.ID, &market.ID, 10, time.Date(2026, 6, 11, 12, 0, 0, 0, saoPaulo))
+	// Cafe: Coffee 40 (1 tx).
+	seedOneOffLoc(t, db, coffee.ID, &cafe.ID, 40, time.Date(2026, 6, 5, 12, 0, 0, 0, saoPaulo))
+	// No location → folds into "(none)".
+	seedOneOffLoc(t, db, groceries.ID, nil, 30, time.Date(2026, 6, 7, 12, 0, 0, 0, saoPaulo))
+
+	rows, err := repo.FindMerchantExpenseTotalsForMonth(time.Date(2026, 6, 1, 0, 0, 0, 0, saoPaulo))
+	if err != nil {
+		t.Fatalf("FindMerchantExpenseTotalsForMonth: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 merchants, got %d", len(rows))
+	}
+	// Ordered by total desc: Supermarket 310, Cafe 40, (none) 30.
+	if rows[0].Name != "Supermarket" || rows[0].Total != 310 || rows[0].TransactionCount != 3 || rows[0].TopCategory != "Groceries" {
+		t.Errorf("unexpected Supermarket row: %+v", rows[0])
+	}
+	if rows[1].Name != "Cafe" || rows[1].Total != 40 || rows[1].TransactionCount != 1 || rows[1].TopCategory != "Coffee" {
+		t.Errorf("unexpected Cafe row: %+v", rows[1])
+	}
+	if rows[2].Name != "(none)" || rows[2].Total != 30 || rows[2].TransactionCount != 1 {
+		t.Errorf("expected the (none) bucket last, got %+v", rows[2])
+	}
+}
+
 func TestIntegration_DuplicateCategoryTranslatesError(t *testing.T) {
 	db := setupIntegrationDB(t)
 	repo := NewCategoryRepository(db)

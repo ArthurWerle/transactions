@@ -57,6 +57,8 @@ type TransactionsService interface {
 	GetMonthlyExpensesByCategory(ctx context.Context, month, year int) ([]CategoryMonthExpense, error)
 	GetMonthlyExpensesBySubcategory(ctx context.Context, month, year int) ([]SubcategoryMonthExpense, error)
 	GetMonthlyExpensesByLocation(ctx context.Context, month, year int) ([]LocationMonthExpense, error)
+	GetMonthlyDailyExpenses(ctx context.Context, month, year int) (*DailyExpensesResult, error)
+	GetMonthlyMerchants(ctx context.Context, month, year int) ([]MerchantMonthExpense, error)
 	PrepayTransaction(ctx context.Context, id uint) (*PrepayResult, error)
 	GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error)
 }
@@ -699,6 +701,64 @@ func (s *transactionsService) GetMonthlyExpensesByLocation(ctx context.Context, 
 	result := make([]LocationMonthExpense, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, LocationMonthExpense{LocationName: row.LocationName, Total: row.Total})
+	}
+	return result, nil
+}
+
+type DailyExpensePoint struct {
+	Date  string  `json:"date"` // YYYY-MM-DD
+	Total float64 `json:"total"`
+}
+
+type DailyExpensesResult struct {
+	Days             []DailyExpensePoint `json:"days"`
+	TransactionCount int64               `json:"transaction_count"`
+	Total            float64             `json:"total"`
+}
+
+// GetMonthlyDailyExpenses returns one zero-filled point per calendar day of the
+// month with that day's expense total, plus the month's expense transaction
+// count and the summed total (which reconciles with the monthly overview).
+func (s *transactionsService) GetMonthlyDailyExpenses(ctx context.Context, month, year int) (*DailyExpensesResult, error) {
+	target := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, s.loc)
+	rows, count, err := s.transactionRepo.FindDailyExpenseTotalsForMonth(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch daily expense totals: %w", err)
+	}
+
+	days := make([]DailyExpensePoint, 0, len(rows))
+	var total float64
+	for _, row := range rows {
+		days = append(days, DailyExpensePoint{Date: row.Day.Format("2006-01-02"), Total: row.Total})
+		total += row.Total
+	}
+	return &DailyExpensesResult{Days: days, TransactionCount: count, Total: total}, nil
+}
+
+type MerchantMonthExpense struct {
+	Name             string  `json:"name"`
+	Total            float64 `json:"total"`
+	TransactionCount int64   `json:"transaction_count"`
+	TopCategory      string  `json:"top_category"`
+}
+
+// GetMonthlyMerchants returns each merchant (location) expense total for the
+// month with its transaction count and dominant category, largest first.
+func (s *transactionsService) GetMonthlyMerchants(ctx context.Context, month, year int) ([]MerchantMonthExpense, error) {
+	target := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, s.loc)
+	rows, err := s.transactionRepo.FindMerchantExpenseTotalsForMonth(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch merchant totals: %w", err)
+	}
+
+	result := make([]MerchantMonthExpense, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, MerchantMonthExpense{
+			Name:             row.Name,
+			Total:            row.Total,
+			TransactionCount: row.TransactionCount,
+			TopCategory:      row.TopCategory,
+		})
 	}
 	return result, nil
 }
