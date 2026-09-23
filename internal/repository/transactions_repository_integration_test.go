@@ -418,3 +418,125 @@ func TestIntegration_UpdatePersistsSubcategoryChange(t *testing.T) {
 		t.Errorf("preloaded subcategory should reflect the new value, got %+v", after.Subcategory)
 	}
 }
+
+func TestIntegration_ExcludedCategoryLeftOutOfAggregates(t *testing.T) {
+	db := setupIntegrationDB(t)
+	repo := NewTransactionsRepository(db, saoPaulo)
+	counted := seedCategory(t, db, "Groceries")
+	excluded := seedCategory(t, db, "Compras Avulsas")
+	if err := db.Model(excluded).Update("exclude_from_calculations", true).Error; err != nil {
+		t.Fatalf("failed to flag category: %v", err)
+	}
+
+	now := time.Now().In(saoPaulo)
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, saoPaulo)
+	monthDate := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	day := month.Add(12 * time.Hour)
+
+	seedOneOff(t, db, counted.ID, "expense", 100, day)
+	seedRecurring(t, db, counted.ID, "expense", 10, monthDate, nil)
+	seedOneOff(t, db, counted.ID, "income", 1000, day)
+	seedOneOff(t, db, excluded.ID, "expense", 5000, day)
+	seedRecurring(t, db, excluded.ID, "expense", 700, monthDate, nil)
+	seedOneOff(t, db, excluded.ID, "income", 3000, day)
+
+	flow, err := repo.FindMonthlyFlow(monthDate, monthDate)
+	if err != nil || len(flow) != 1 {
+		t.Fatalf("FindMonthlyFlow: %v (%d rows)", err, len(flow))
+	}
+	if flow[0].Expense != 110 || flow[0].Income != 1000 {
+		t.Errorf("monthly flow: expected expense 110 / income 1000, got %v / %v", flow[0].Expense, flow[0].Income)
+	}
+
+	catFlow, err := repo.FindCategoryMonthlyFlow(monthDate, monthDate, nil)
+	if err != nil {
+		t.Fatalf("FindCategoryMonthlyFlow: %v", err)
+	}
+	for _, row := range catFlow {
+		if row.CategoryID == excluded.ID {
+			t.Errorf("category flow must not include the excluded category, got %+v", row)
+		}
+	}
+
+	catTotals, err := repo.FindCategoryExpenseTotalsForMonth(month)
+	if err != nil || len(catTotals) != 1 || catTotals[0].Total != 110 {
+		t.Errorf("category totals: expected only Groceries=110, got %+v (err %v)", catTotals, err)
+	}
+
+	subTotals, err := repo.FindSubcategoryExpenseTotalsForMonth(month)
+	if err != nil || len(subTotals) != 1 || subTotals[0].Total != 110 {
+		t.Errorf("subcategory totals: expected (none)=110, got %+v (err %v)", subTotals, err)
+	}
+
+	locTotals, err := repo.FindLocationExpenseTotalsForMonth(month)
+	if err != nil || len(locTotals) != 1 || locTotals[0].Total != 110 {
+		t.Errorf("location totals: expected (none)=110, got %+v (err %v)", locTotals, err)
+	}
+
+	merchants, err := repo.FindMerchantExpenseTotalsForMonth(month)
+	if err != nil || len(merchants) != 1 || merchants[0].Total != 110 || merchants[0].TransactionCount != 2 {
+		t.Errorf("merchants: expected (none)=110 over 2 transactions, got %+v (err %v)", merchants, err)
+	}
+
+	days, count, err := repo.FindDailyExpenseTotalsForMonth(month)
+	if err != nil {
+		t.Fatalf("FindDailyExpenseTotalsForMonth: %v", err)
+	}
+	var daily float64
+	for _, d := range days {
+		daily += d.Total
+	}
+	if daily != 110 || count != 2 {
+		t.Errorf("daily totals: expected 110 over 2 transactions, got %v over %d", daily, count)
+	}
+
+	summary, err := repo.FindExpenseSummaryByCategory(nil, nil)
+	if err != nil || len(summary) != 1 || summary[0].TotalSpent != 100 {
+		t.Errorf("expense summary: expected only Groceries=100, got %+v (err %v)", summary, err)
+	}
+
+	recurring, err := repo.FindRecurringExpensesInRange(nil, nil)
+	if err != nil || len(recurring) != 1 || recurring[0].Amount != 10 {
+		t.Errorf("recurring expenses: expected only Groceries=10, got %+v (err %v)", recurring, err)
+	}
+
+	income, err := repo.FindIncomeTotalInRange(nil, nil)
+	if err != nil || income != 1000 {
+		t.Errorf("income total: expected 1000, got %v (err %v)", income, err)
+	}
+
+	monthTotal, err := repo.FindCurrentMonthTotalByType("expense")
+	if err != nil || monthTotal != 110 {
+		t.Errorf("current month expense total: expected 110, got %v (err %v)", monthTotal, err)
+	}
+
+	typeTotals, err := repo.FindNonRecurringMonthlyTotalsByType()
+	if err != nil {
+		t.Fatalf("FindNonRecurringMonthlyTotalsByType: %v", err)
+	}
+	for _, row := range typeTotals {
+		if (row.Type == "expense" && row.MonthlySum != 100) || (row.Type == "income" && row.MonthlySum != 1000) {
+			t.Errorf("monthly type totals must skip the excluded category, got %+v", row)
+		}
+	}
+
+	recurringByType, err := repo.FindRecurringTransactionSummaryByType()
+	if err != nil || len(recurringByType) != 1 || recurringByType[0].Amount != 10 {
+		t.Errorf("recurring by type: expected only the Groceries schedule, got %+v (err %v)", recurringByType, err)
+	}
+
+	isExcluded, err := repo.IsCategoryExcluded(excluded.ID)
+	if err != nil || !isExcluded {
+		t.Errorf("expected category %d to be excluded (err %v)", excluded.ID, err)
+	}
+	isExcluded, err = repo.IsCategoryExcluded(counted.ID)
+	if err != nil || isExcluded {
+		t.Errorf("expected category %d to be counted (err %v)", counted.ID, err)
+	}
+
+	// Listings still show the excluded category's transactions.
+	listed, err := repo.FindByDateRange(month, month.AddDate(0, 1, 0))
+	if err != nil || len(listed) != 6 {
+		t.Errorf("listing: expected all 6 transactions, got %d (err %v)", len(listed), err)
+	}
+}

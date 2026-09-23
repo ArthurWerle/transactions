@@ -22,9 +22,10 @@ func NewCategoryHandler(categoryService service.CategoryService) *CategoryHandle
 }
 
 type CreateCategoryRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description,omitempty"`
-	Color       string `json:"color,omitempty"`
+	Name                    string `json:"name" binding:"required"`
+	Description             string `json:"description,omitempty"`
+	Color                   string `json:"color,omitempty"`
+	ExcludeFromCalculations bool   `json:"exclude_from_calculations,omitempty"`
 }
 
 func (h *CategoryHandler) CreateCategory(c *gin.Context) {
@@ -38,9 +39,10 @@ func (h *CategoryHandler) CreateCategory(c *gin.Context) {
 	}
 
 	category := &model.Category{
-		Name:        req.Name,
-		Description: req.Description,
-		Color:       req.Color,
+		Name:                    req.Name,
+		Description:             req.Description,
+		Color:                   req.Color,
+		ExcludeFromCalculations: req.ExcludeFromCalculations,
 	}
 
 	if err := h.categoryService.CreateCategory(c.Request.Context(), category); err != nil {
@@ -103,9 +105,10 @@ func (h *CategoryHandler) GetCategories(c *gin.Context) {
 }
 
 type UpdateCategoryRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Color       *string `json:"color,omitempty"`
+	Name                    *string `json:"name,omitempty"`
+	Description             *string `json:"description,omitempty"`
+	Color                   *string `json:"color,omitempty"`
+	ExcludeFromCalculations *bool   `json:"exclude_from_calculations,omitempty"`
 }
 
 func (h *CategoryHandler) UpdateCategory(c *gin.Context) {
@@ -144,6 +147,9 @@ func (h *CategoryHandler) UpdateCategory(c *gin.Context) {
 	}
 	if req.Color != nil {
 		category.Color = *req.Color
+	}
+	if req.ExcludeFromCalculations != nil {
+		category.ExcludeFromCalculations = *req.ExcludeFromCalculations
 	}
 
 	if err := h.categoryService.UpdateCategory(c.Request.Context(), category); err != nil {
