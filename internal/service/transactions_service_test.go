@@ -30,6 +30,9 @@ type mockTransactionsRepository struct {
 	dailyExpenseTotals     []repository.DailyExpenseTotal
 	dailyExpenseCount      int64
 	merchantMonthTotals    []repository.MerchantMonthTotal
+	excludedCategories     map[uint]bool
+	currentMonthTotal      float64
+	currentMonthCatTotal   float64
 }
 
 func newMockRepository() *mockTransactionsRepository {
@@ -145,11 +148,11 @@ func (m *mockTransactionsRepository) FindRecurringIncomesInRange(startDate, endD
 }
 
 func (m *mockTransactionsRepository) FindCurrentMonthTotalByType(transactionType string) (float64, error) {
-	return 0, nil
+	return m.currentMonthTotal, nil
 }
 
 func (m *mockTransactionsRepository) FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error) {
-	return 0, nil
+	return m.currentMonthCatTotal, nil
 }
 
 func (m *mockTransactionsRepository) FindNonRecurringMonthlyTotalsByType() ([]repository.MonthlyTypeTotal, error) {
@@ -158,6 +161,10 @@ func (m *mockTransactionsRepository) FindNonRecurringMonthlyTotalsByType() ([]re
 
 func (m *mockTransactionsRepository) FindRecurringTransactionSummaryByType() ([]repository.RecurringTypeTransaction, error) {
 	return m.recurringByType, nil
+}
+
+func (m *mockTransactionsRepository) IsCategoryExcluded(categoryID uint) (bool, error) {
+	return m.excludedCategories[categoryID], nil
 }
 
 func newTestService(repo repository.TransactionsRepository) TransactionsService {
@@ -1053,5 +1060,41 @@ func TestGetAverageByCategory_DefaultRangeExcludesCurrentMonth(t *testing.T) {
 	}
 	if result[0].Average != 100 {
 		t.Errorf("expected Average 100, got %v", result[0].Average)
+	}
+}
+
+// ---- GetTransactionMonthlyPercentages tests ----
+
+func TestGetTransactionMonthlyPercentages(t *testing.T) {
+	repo := newMockRepository()
+	repo.currentMonthTotal = 1000
+	repo.currentMonthCatTotal = 200
+	svc := NewTransactionsService(repo, time.UTC)
+
+	got, err := svc.GetTransactionMonthlyPercentages(context.Background(), &model.Transaction{CategoryID: 1, Type: "expense", Amount: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.TotalMonthPercent == nil || *got.TotalMonthPercent != 10 {
+		t.Errorf("expected total month percent 10, got %v", got.TotalMonthPercent)
+	}
+	if got.CategoryMonthPercent == nil || *got.CategoryMonthPercent != 50 {
+		t.Errorf("expected category month percent 50, got %v", got.CategoryMonthPercent)
+	}
+}
+
+func TestGetTransactionMonthlyPercentages_ExcludedCategory(t *testing.T) {
+	repo := newMockRepository()
+	repo.currentMonthTotal = 1000
+	repo.currentMonthCatTotal = 200
+	repo.excludedCategories = map[uint]bool{1: true}
+	svc := NewTransactionsService(repo, time.UTC)
+
+	got, err := svc.GetTransactionMonthlyPercentages(context.Background(), &model.Transaction{CategoryID: 1, Type: "expense", Amount: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.TotalMonthPercent != nil || got.CategoryMonthPercent != nil {
+		t.Errorf("expected no percentages for an excluded category, got %+v", got)
 	}
 }

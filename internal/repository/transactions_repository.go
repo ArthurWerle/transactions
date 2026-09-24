@@ -113,6 +113,7 @@ type TransactionsRepository interface {
 	FindCurrentMonthTotalByTypeAndCategory(transactionType string, categoryID uint) (float64, error)
 	FindNonRecurringMonthlyTotalsByType() ([]MonthlyTypeTotal, error)
 	FindRecurringTransactionSummaryByType() ([]RecurringTypeTransaction, error)
+	IsCategoryExcluded(categoryID uint) (bool, error)
 }
 
 type transactionsRepository struct {
@@ -131,6 +132,13 @@ func WithIsPrepaid(db *gorm.DB) *gorm.DB {
 		AND t2.deleted_at IS NULL
 	) AS is_prepaid`)
 }
+
+// countedCategory matches transactions whose category takes part in
+// aggregates. Categories flagged exclude_from_calculations (e.g. one-off
+// purchases that would skew averages) are left out of every report, average
+// and percentage; listings are unaffected. Unqualified so it works whether or
+// not the query aliases transactions.
+const countedCategory = "category_id NOT IN (SELECT id FROM categories WHERE exclude_from_calculations)"
 
 // monthBounds returns the half-open interval [first instant of the month,
 // first instant of the next month) in the given location.
@@ -310,6 +318,7 @@ func (r *transactionsRepository) FindMonthlyFlow(startMonth, endMonth time.Time)
 			  AND date IS NOT NULL
 			  AND deleted_at IS NULL
 			  AND prepaid_from_id IS NULL
+			  AND ` + countedCategory + `
 			UNION ALL
 			SELECT m.month, t.type, t.amount
 			FROM months m
@@ -317,6 +326,7 @@ func (r *transactionsRepository) FindMonthlyFlow(startMonth, endMonth time.Time)
 			  AND t.deleted_at IS NULL
 			  AND t.start_date < (m.month + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= m.month)
+			  AND t.` + countedCategory + `
 		)
 		SELECT m.month,
 		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'income'), 0)  AS income,
@@ -349,6 +359,7 @@ func (r *transactionsRepository) FindCategoryMonthlyFlow(startMonth, endMonth ti
 			  AND t.prepaid_from_id IS NULL
 			  AND t.date >= (SELECT min(month) FROM months)
 			  AND t.date < ((SELECT max(month) FROM months) + interval '1 month')
+			  AND t.` + countedCategory + `
 			UNION ALL
 			SELECT m.month, t.category_id, t.type, t.amount
 			FROM months m
@@ -356,6 +367,7 @@ func (r *transactionsRepository) FindCategoryMonthlyFlow(startMonth, endMonth ti
 			  AND t.deleted_at IS NULL
 			  AND t.start_date < (m.month + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= m.month)
+			  AND t.` + countedCategory + `
 		)
 		SELECT a.month,
 		       a.category_id,
@@ -393,6 +405,7 @@ func (r *transactionsRepository) FindCategoryExpenseTotalsForMonth(month time.Ti
 			  AND t.date IS NOT NULL
 			  AND t.deleted_at IS NULL
 			  AND t.prepaid_from_id IS NULL
+			  AND t.` + countedCategory + `
 			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
 			UNION ALL
 			SELECT t.category_id, t.amount
@@ -400,6 +413,7 @@ func (r *transactionsRepository) FindCategoryExpenseTotalsForMonth(month time.Ti
 			WHERE t.is_recurring = true
 			  AND t.type = 'expense'
 			  AND t.deleted_at IS NULL
+			  AND t.` + countedCategory + `
 			  AND t.start_date < (?::date + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
 		)
@@ -431,6 +445,7 @@ func (r *transactionsRepository) FindSubcategoryExpenseTotalsForMonth(month time
 			  AND t.date IS NOT NULL
 			  AND t.deleted_at IS NULL
 			  AND t.prepaid_from_id IS NULL
+			  AND t.` + countedCategory + `
 			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
 			UNION ALL
 			SELECT t.subcategory_id, t.amount
@@ -438,6 +453,7 @@ func (r *transactionsRepository) FindSubcategoryExpenseTotalsForMonth(month time
 			WHERE t.is_recurring = true
 			  AND t.type = 'expense'
 			  AND t.deleted_at IS NULL
+			  AND t.` + countedCategory + `
 			  AND t.start_date < (?::date + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
 		)
@@ -469,6 +485,7 @@ func (r *transactionsRepository) FindLocationExpenseTotalsForMonth(month time.Ti
 			  AND t.date IS NOT NULL
 			  AND t.deleted_at IS NULL
 			  AND t.prepaid_from_id IS NULL
+			  AND t.` + countedCategory + `
 			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
 			UNION ALL
 			SELECT t.location_id, t.amount
@@ -476,6 +493,7 @@ func (r *transactionsRepository) FindLocationExpenseTotalsForMonth(month time.Ti
 			WHERE t.is_recurring = true
 			  AND t.type = 'expense'
 			  AND t.deleted_at IS NULL
+			  AND t.` + countedCategory + `
 			  AND t.start_date < (?::date + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
 		)
@@ -511,6 +529,7 @@ func (r *transactionsRepository) FindDailyExpenseTotalsForMonth(month time.Time)
 			  AND t.date IS NOT NULL
 			  AND t.deleted_at IS NULL
 			  AND t.prepaid_from_id IS NULL
+			  AND t.` + countedCategory + `
 			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
 			UNION ALL
 			SELECT (?::date + (LEAST(
@@ -522,6 +541,7 @@ func (r *transactionsRepository) FindDailyExpenseTotalsForMonth(month time.Time)
 			WHERE t.is_recurring = true
 			  AND t.type = 'expense'
 			  AND t.deleted_at IS NULL
+			  AND t.` + countedCategory + `
 			  AND t.start_date < (?::date + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
 		)
@@ -541,10 +561,12 @@ func (r *transactionsRepository) FindDailyExpenseTotalsForMonth(month time.Time)
 		  (SELECT COUNT(*) FROM transactions t
 		     WHERE t.is_recurring = false AND t.type = 'expense' AND t.date IS NOT NULL
 		       AND t.deleted_at IS NULL AND t.prepaid_from_id IS NULL
+		       AND t.` + countedCategory + `
 		       AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date)
 		  +
 		  (SELECT COUNT(*) FROM transactions t
 		     WHERE t.is_recurring = true AND t.type = 'expense' AND t.deleted_at IS NULL
+		       AND t.` + countedCategory + `
 		       AND t.start_date < (?::date + interval '1 month')::date
 		       AND (t.end_date IS NULL OR t.end_date >= ?::date)) AS count
 	`, tz, monthStr, monthStr, monthStr).Scan(&count).Error
@@ -573,6 +595,7 @@ func (r *transactionsRepository) FindMerchantExpenseTotalsForMonth(month time.Ti
 			  AND t.date IS NOT NULL
 			  AND t.deleted_at IS NULL
 			  AND t.prepaid_from_id IS NULL
+			  AND t.` + countedCategory + `
 			  AND date_trunc('month', t.date AT TIME ZONE ?)::date = ?::date
 			UNION ALL
 			SELECT t.location_id, t.category_id, t.amount
@@ -580,6 +603,7 @@ func (r *transactionsRepository) FindMerchantExpenseTotalsForMonth(month time.Ti
 			WHERE t.is_recurring = true
 			  AND t.type = 'expense'
 			  AND t.deleted_at IS NULL
+			  AND t.` + countedCategory + `
 			  AND t.start_date < (?::date + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= ?::date)
 		),
@@ -617,7 +641,7 @@ func (r *transactionsRepository) FindEarliestDate(startDate, endDate *time.Time)
 	var result struct {
 		MinDate *time.Time `gorm:"column:min_date"`
 	}
-	query := "SELECT MIN(date) as min_date FROM transactions WHERE date IS NOT NULL AND deleted_at IS NULL"
+	query := "SELECT MIN(date) as min_date FROM transactions WHERE date IS NOT NULL AND deleted_at IS NULL AND " + countedCategory
 	args := []interface{}{}
 	if startDate != nil {
 		query += " AND date >= ?"
@@ -647,7 +671,8 @@ func (r *transactionsRepository) FindExpenseSummaryByCategory(startDate, endDate
 			AND t.category_id IS NOT NULL
 			AND t.date IS NOT NULL
 			AND t.deleted_at IS NULL
-			AND t.prepaid_from_id IS NULL`
+			AND t.prepaid_from_id IS NULL
+			AND t.` + countedCategory
 	args := []interface{}{}
 	if startDate != nil {
 		query += " AND t.date >= ?"
@@ -677,7 +702,8 @@ func (r *transactionsRepository) FindRecurringExpensesInRange(startDate, endDate
 			AND t.category_id IS NOT NULL
 			AND t.is_recurring = true
 			AND t.start_date IS NOT NULL
-			AND t.deleted_at IS NULL`
+			AND t.deleted_at IS NULL
+			AND t.` + countedCategory
 	args := []interface{}{}
 	if endDate != nil {
 		query += " AND t.start_date <= ?"
@@ -702,7 +728,8 @@ func (r *transactionsRepository) FindIncomeTotalInRange(startDate, endDate *time
 		  AND is_recurring = false
 		  AND date IS NOT NULL
 		  AND deleted_at IS NULL
-		  AND prepaid_from_id IS NULL`
+		  AND prepaid_from_id IS NULL
+		  AND ` + countedCategory
 	args := []interface{}{}
 	if startDate != nil {
 		query += " AND date >= ?"
@@ -724,7 +751,8 @@ func (r *transactionsRepository) FindRecurringIncomesInRange(startDate, endDate 
 		WHERE type = 'income'
 		  AND is_recurring = true
 		  AND start_date IS NOT NULL
-		  AND deleted_at IS NULL`
+		  AND deleted_at IS NULL
+		  AND ` + countedCategory
 	args := []interface{}{}
 	if endDate != nil {
 		query += " AND start_date <= ?"
@@ -750,6 +778,7 @@ func (r *transactionsRepository) FindCurrentMonthTotalByType(transactionType str
 		Select("COALESCE(SUM(amount), 0) as total").
 		Where("type = ?", transactionType).
 		Where("prepaid_from_id IS NULL").
+		Where(countedCategory).
 		Where(cond, args...).
 		Scan(&result).Error
 
@@ -769,6 +798,7 @@ func (r *transactionsRepository) FindCurrentMonthTotalByTypeAndCategory(transact
 		Where("type = ?", transactionType).
 		Where("category_id = ?", categoryID).
 		Where("prepaid_from_id IS NULL").
+		Where(countedCategory).
 		Where(cond, args...).
 		Scan(&result).Error
 
@@ -788,6 +818,7 @@ func (r *transactionsRepository) FindNonRecurringMonthlyTotalsByType() ([]Monthl
 		  AND date IS NOT NULL
 		  AND deleted_at IS NULL
 		  AND prepaid_from_id IS NULL
+		  AND ` + countedCategory + `
 		GROUP BY type, year, month
 	`, tz, tz).Scan(&results).Error
 	return results, err
@@ -801,6 +832,17 @@ func (r *transactionsRepository) FindRecurringTransactionSummaryByType() ([]Recu
 		WHERE is_recurring = true
 		  AND start_date IS NOT NULL
 		  AND deleted_at IS NULL
+		  AND ` + countedCategory + `
 	`).Scan(&results).Error
 	return results, err
+}
+
+// IsCategoryExcluded reports whether the category is flagged
+// exclude_from_calculations (soft-deleted categories included).
+func (r *transactionsRepository) IsCategoryExcluded(categoryID uint) (bool, error) {
+	var excluded bool
+	err := r.db.Raw(`
+		SELECT COALESCE((SELECT exclude_from_calculations FROM categories WHERE id = ?), false)
+	`, categoryID).Scan(&excluded).Error
+	return excluded, err
 }

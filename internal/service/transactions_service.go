@@ -858,7 +858,20 @@ func ExclusiveMonthCount(start, end time.Time) int {
 	return InclusiveMonthCount(start, end) - 1
 }
 
+// GetTransactionMonthlyPercentages returns the transaction's share of the
+// current month's totals. Transactions in a category excluded from
+// calculations are not part of those totals, so they get no percentages.
 func (s *transactionsService) GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error) {
+	if tx.CategoryID != 0 {
+		excluded, err := s.transactionRepo.IsCategoryExcluded(tx.CategoryID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check category exclusion: %w", err)
+		}
+		if excluded {
+			return &TransactionPercentages{}, nil
+		}
+	}
+
 	monthTotal, err := s.transactionRepo.FindCurrentMonthTotalByType(tx.Type)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch current month total: %w", err)
