@@ -174,7 +174,7 @@ func TestGetMonthOverview_Variations(t *testing.T) {
 	// May: income 100, expense 0 · June: income 150, expense 300
 	repo.monthlyFlow = []repository.MonthlyFlowRow{
 		{Month: month(2026, 5), Income: 100, Expense: 0},
-		{Month: month(2026, 6), Income: 150, Expense: 300},
+		{Month: month(2026, 6), Income: 150, Expense: 300, ExcludedExpense: 1000},
 	}
 
 	overview, err := svc.GetMonthOverview(context.Background(), 6, 2026)
@@ -191,6 +191,14 @@ func TestGetMonthOverview_Variations(t *testing.T) {
 	// Division by zero must yield null, not Inf (the contract charts rely on).
 	if overview.Expense.PercentageVariation != nil {
 		t.Errorf("expected nil expense variation for zero last month, got %v", *overview.Expense.PercentageVariation)
+	}
+	// Excluded categories stay out of the comparable figures but are part of
+	// the full sum.
+	if overview.Expense.CurrentMonth != 300 || overview.Expense.FullCurrentMonth != 1300 {
+		t.Errorf("expected expense 300 / full 1300, got %+v", overview.Expense)
+	}
+	if overview.Income.FullCurrentMonth != 150 {
+		t.Errorf("expected full income 150, got %v", overview.Income.FullCurrentMonth)
 	}
 }
 

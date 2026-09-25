@@ -596,6 +596,9 @@ type MonthOverviewSide struct {
 	CurrentMonth        float64  `json:"currentMonth"`
 	LastMonth           float64  `json:"lastMonth"`
 	PercentageVariation *float64 `json:"percentageVariation"`
+	// FullCurrentMonth also counts categories excluded from calculations, so
+	// the real amount stays visible next to the comparable one.
+	FullCurrentMonth float64 `json:"fullCurrentMonth"`
 }
 
 type MonthOverview struct {
@@ -631,11 +634,13 @@ func (s *transactionsService) GetMonthOverview(ctx context.Context, month, year 
 			CurrentMonth:        current.Income,
 			LastMonth:           last.Income,
 			PercentageVariation: variation(current.Income, last.Income),
+			FullCurrentMonth:    current.Income + current.ExcludedIncome,
 		},
 		Expense: MonthOverviewSide{
 			CurrentMonth:        current.Expense,
 			LastMonth:           last.Expense,
 			PercentageVariation: variation(current.Expense, last.Expense),
+			FullCurrentMonth:    current.Expense + current.ExcludedExpense,
 		},
 	}, nil
 }
