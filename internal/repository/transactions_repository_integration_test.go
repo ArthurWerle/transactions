@@ -447,6 +447,9 @@ func TestIntegration_ExcludedCategoryLeftOutOfAggregates(t *testing.T) {
 	if flow[0].Expense != 110 || flow[0].Income != 1000 {
 		t.Errorf("monthly flow: expected expense 110 / income 1000, got %v / %v", flow[0].Expense, flow[0].Income)
 	}
+	if flow[0].ExcludedExpense != 5700 || flow[0].ExcludedIncome != 3000 {
+		t.Errorf("monthly flow: expected excluded expense 5700 / income 3000, got %v / %v", flow[0].ExcludedExpense, flow[0].ExcludedIncome)
+	}
 
 	catFlow, err := repo.FindCategoryMonthlyFlow(monthDate, monthDate, nil)
 	if err != nil {

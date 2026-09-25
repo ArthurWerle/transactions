@@ -46,6 +46,10 @@ type MonthlyFlowRow struct {
 	Month   time.Time `gorm:"column:month"`
 	Income  float64   `gorm:"column:income"`
 	Expense float64   `gorm:"column:expense"`
+	// Amounts in categories excluded from calculations, kept apart from
+	// Income/Expense so callers can still show the full sum.
+	ExcludedIncome  float64 `gorm:"column:excluded_income"`
+	ExcludedExpense float64 `gorm:"column:excluded_expense"`
 }
 
 type CategoryMonthlyFlowRow struct {
@@ -303,7 +307,8 @@ func (r *transactionsRepository) FindByDateRange(startDate, endDate time.Time) (
 // [startMonth, endMonth] (inclusive, zero-filled) in one query: one-offs are
 // bucketed by their reporting-timezone month, recurring schedules contribute
 // their amount to each month they are active in. Prepayment rows are cash
-// records excluded from aggregates (consumption basis).
+// records excluded from aggregates (consumption basis). Categories excluded
+// from calculations are reported separately in the excluded_* columns.
 func (r *transactionsRepository) FindMonthlyFlow(startMonth, endMonth time.Time) ([]MonthlyFlowRow, error) {
 	var results []MonthlyFlowRow
 	tz := r.loc.String()
@@ -312,25 +317,27 @@ func (r *transactionsRepository) FindMonthlyFlow(startMonth, endMonth time.Time)
 			SELECT generate_series(?::date, ?::date, interval '1 month')::date AS month
 		),
 		activity AS (
-			SELECT date_trunc('month', date AT TIME ZONE ?)::date AS month, type, amount
+			SELECT date_trunc('month', date AT TIME ZONE ?)::date AS month, type, amount,
+			       NOT (` + countedCategory + `) AS excluded
 			FROM transactions
 			WHERE is_recurring = false
 			  AND date IS NOT NULL
 			  AND deleted_at IS NULL
 			  AND prepaid_from_id IS NULL
-			  AND ` + countedCategory + `
 			UNION ALL
-			SELECT m.month, t.type, t.amount
+			SELECT m.month, t.type, t.amount,
+			       NOT (t.` + countedCategory + `) AS excluded
 			FROM months m
 			JOIN transactions t ON t.is_recurring = true
 			  AND t.deleted_at IS NULL
 			  AND t.start_date < (m.month + interval '1 month')::date
 			  AND (t.end_date IS NULL OR t.end_date >= m.month)
-			  AND t.` + countedCategory + `
 		)
 		SELECT m.month,
-		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'income'), 0)  AS income,
-		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'expense'), 0) AS expense
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'income' AND NOT a.excluded), 0)  AS income,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'expense' AND NOT a.excluded), 0) AS expense,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'income' AND a.excluded), 0)      AS excluded_income,
+		       COALESCE(SUM(a.amount) FILTER (WHERE a.type = 'expense' AND a.excluded), 0)     AS excluded_expense
 		FROM months m
 		LEFT JOIN activity a ON a.month = m.month
 		GROUP BY m.month
