@@ -967,7 +967,6 @@ func (s *transactionsService) ChangeRecurringAmount(ctx context.Context, id uint
 		LocationID:    original.LocationID,
 		Amount:        amount,
 		Type:          original.Type,
-		Subtype:       original.Subtype,
 		Origin:        original.Origin,
 		Description:   original.Description,
 		Frequency:     original.Frequency,
