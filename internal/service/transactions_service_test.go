@@ -87,6 +87,11 @@ func (m *mockTransactionsRepository) Update(transaction *model.Transaction) erro
 	return nil
 }
 
+func (m *mockTransactionsRepository) SplitRecurring(previous, next *model.Transaction) error {
+	m.transactions[previous.ID] = previous
+	return m.Create(next)
+}
+
 func (m *mockTransactionsRepository) Delete(id uint) error {
 	return nil
 }
@@ -1096,5 +1101,153 @@ func TestGetTransactionMonthlyPercentages_ExcludedCategory(t *testing.T) {
 	}
 	if got.TotalMonthPercent != nil || got.CategoryMonthPercent != nil {
 		t.Errorf("expected no percentages for an excluded category, got %+v", got)
+	}
+}
+
+// ---- ChangeRecurringAmount tests ----
+
+func seedInternet(repo *mockTransactionsRepository, start time.Time, end *time.Time) *model.Transaction {
+	desc := "Internet"
+	monthly := MonthlyFrequency
+	subID := uint(7)
+	tx := &model.Transaction{
+		ID:            1,
+		IsRecurring:   true,
+		CategoryID:    3,
+		SubcategoryID: &subID,
+		Amount:        149,
+		Type:          "expense",
+		Origin:        "web",
+		Description:   &desc,
+		Frequency:     &monthly,
+		StartDate:     &start,
+		EndDate:       end,
+		CreatedById:   1,
+	}
+	repo.transactions[1] = tx
+	return tx
+}
+
+func TestChangeRecurringAmount_SplitsAtCurrentMonth(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+	end := monthsAgo(-6)
+	original := seedInternet(repo, monthsAgo(10), &end)
+
+	result, err := svc.ChangeRecurringAmount(context.Background(), 1, 129, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	current := monthsAgo(0)
+	wantPrevEnd := current.AddDate(0, 0, -1)
+	if result.Previous != original || original.Amount != 149 {
+		t.Fatalf("previous schedule must keep its amount, got %+v", result.Previous)
+	}
+	if original.EndDate == nil || !original.EndDate.Equal(wantPrevEnd) {
+		t.Errorf("expected previous end_date %v, got %v", wantPrevEnd, original.EndDate)
+	}
+
+	next := result.Current
+	if next.ID == original.ID {
+		t.Fatal("expected a new schedule row")
+	}
+	if next.Amount != 129 || !next.IsRecurring {
+		t.Errorf("unexpected new schedule: %+v", next)
+	}
+	if next.StartDate == nil || !next.StartDate.Equal(current) {
+		t.Errorf("expected new start_date %v, got %v", current, next.StartDate)
+	}
+	if next.EndDate == nil || !next.EndDate.Equal(end) {
+		t.Errorf("new schedule must inherit end_date %v, got %v", end, next.EndDate)
+	}
+	if next.PreviousID == nil || *next.PreviousID != original.ID {
+		t.Error("new schedule must reference the previous one")
+	}
+	if next.CategoryID != 3 || next.SubcategoryID == nil || *next.SubcategoryID != 7 || *next.Description != "Internet" {
+		t.Errorf("new schedule must copy classification fields, got %+v", next)
+	}
+
+	// The months before the change keep the old amount; total paid across
+	// both rows covers the whole elapsed range.
+	paidBefore := *ComputeTotalPaid(original, time.Now().UTC())
+	paidAfter := *ComputeTotalPaid(next, time.Now().UTC())
+	if paidBefore != 149*10 || paidAfter != 129 {
+		t.Errorf("expected paid 1490 + 129, got %v + %v", paidBefore, paidAfter)
+	}
+}
+
+func TestChangeRecurringAmount_ExplicitFutureMonth(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+	original := seedInternet(repo, monthsAgo(3), nil)
+
+	from := monthsAgo(-2).AddDate(0, 0, 14)
+	result, err := svc.ChangeRecurringAmount(context.Background(), 1, 169, &from)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !result.EffectiveFrom.Equal(monthsAgo(-2)) {
+		t.Errorf("expected effective month %v, got %v", monthsAgo(-2), result.EffectiveFrom)
+	}
+	if !original.EndDate.Equal(monthsAgo(-2).AddDate(0, 0, -1)) {
+		t.Errorf("unexpected previous end_date %v", original.EndDate)
+	}
+	if result.Current.EndDate != nil {
+		t.Error("open-ended schedule must stay open-ended")
+	}
+}
+
+func TestChangeRecurringAmount_NotStartedEditsInPlace(t *testing.T) {
+	repo := newMockRepository()
+	svc := newTestService(repo)
+	original := seedInternet(repo, monthsAgo(0), nil)
+
+	result, err := svc.ChangeRecurringAmount(context.Background(), 1, 129, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Previous != nil || result.Current != original {
+		t.Fatal("expected an in-place edit")
+	}
+	if original.Amount != 129 || original.EndDate != nil {
+		t.Errorf("unexpected schedule after edit: %+v", original)
+	}
+	if len(repo.created) != 0 {
+		t.Error("no new row expected")
+	}
+}
+
+func TestChangeRecurringAmount_Rejections(t *testing.T) {
+	ended := monthsAgo(1)
+	tests := []struct {
+		name   string
+		setup  func(*mockTransactionsRepository)
+		amount float64
+		want   string
+	}{
+		{"not recurring", func(r *mockTransactionsRepository) {
+			d := time.Now()
+			r.transactions[1] = &model.Transaction{ID: 1, Amount: 10, Type: "expense", Date: &d}
+		}, 5, "not recurring"},
+		{"prepaid", func(r *mockTransactionsRepository) {
+			seedInternet(r, monthsAgo(3), nil).IsPrepaid = true
+		}, 129, "prepaid"},
+		{"same amount", func(r *mockTransactionsRepository) { seedInternet(r, monthsAgo(3), nil) }, 149, "unchanged"},
+		{"non-positive", func(r *mockTransactionsRepository) { seedInternet(r, monthsAgo(3), nil) }, 0, "greater than 0"},
+		{"already ended", func(r *mockTransactionsRepository) { seedInternet(r, monthsAgo(5), &ended) }, 129, "ends before"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMockRepository()
+			tt.setup(repo)
+			_, err := newTestService(repo).ChangeRecurringAmount(context.Background(), 1, tt.amount, nil)
+			if !errors.Is(err, ErrInvalidTransaction) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected invalid error containing %q, got %v", tt.want, err)
+			}
+			if len(repo.created) != 0 {
+				t.Error("nothing should be created")
+			}
+		})
 	}
 }

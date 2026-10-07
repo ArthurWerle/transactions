@@ -147,6 +147,7 @@ func setupRouter(cfg *config.Config, logger *slog.Logger, transactionHandler *ha
 			transactions.DELETE("/:id", transactionHandler.DeleteTransaction)
 			transactions.POST("/:id/prepay", transactionHandler.PrepayTransaction)
 			transactions.PATCH("/:id/end", transactionHandler.EndRecurringTransaction)
+			transactions.POST("/:id/change-amount", transactionHandler.ChangeRecurringAmount)
 			transactions.GET("/by-date-range", transactionHandler.GetTransactionsByDateRange)
 			transactions.GET("/latest", transactionHandler.GetLatestTransactions)
 			transactions.GET("/biggest", transactionHandler.GetBiggestTransactions)
