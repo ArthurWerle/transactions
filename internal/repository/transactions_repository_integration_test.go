@@ -543,3 +543,54 @@ func TestIntegration_ExcludedCategoryLeftOutOfAggregates(t *testing.T) {
 		t.Errorf("listing: expected all 6 transactions, got %d (err %v)", len(listed), err)
 	}
 }
+
+func TestIntegration_SplitRecurringKeepsHistory(t *testing.T) {
+	db := setupIntegrationDB(t)
+	repo := NewTransactionsRepository(db, time.UTC)
+	cat := seedCategory(t, db, "Internet")
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	previous := seedRecurring(t, db, cat.ID, "expense", 149, start, nil)
+
+	prevEnd := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
+	previous.EndDate = &prevEnd
+	newStart := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	monthly := "monthly"
+	next := &model.Transaction{IsRecurring: true, CategoryID: cat.ID, Type: "expense", Amount: 129, StartDate: &newStart, Frequency: &monthly, PreviousID: &previous.ID}
+
+	if err := repo.SplitRecurring(previous, next); err != nil {
+		t.Fatalf("split failed: %v", err)
+	}
+
+	rows, err := repo.FindMonthlyFlow(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("monthly flow failed: %v", err)
+	}
+	got := map[string]float64{}
+	for _, r := range rows {
+		got[r.Month.Format("2006-01")] += r.Expense
+	}
+	want := map[string]float64{"2026-02": 149, "2026-03": 149, "2026-04": 129, "2026-05": 129}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: expected %v, got %v (all: %v)", k, v, got[k], got)
+		}
+	}
+
+	stored, err := repo.FindByID(next.ID)
+	if err != nil || stored.PreviousID == nil || *stored.PreviousID != previous.ID {
+		t.Fatalf("expected previous_id link, got %+v (err %v)", stored, err)
+	}
+
+	// A failing insert must roll back the close of the previous schedule.
+	bad := &model.Transaction{IsRecurring: true, CategoryID: cat.ID, Type: "expense", Amount: 99, Frequency: &monthly}
+	otherEnd := time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+	stored.EndDate = &otherEnd
+	if err := repo.SplitRecurring(stored, bad); err == nil {
+		t.Fatal("expected shape constraint to reject the new row")
+	}
+	reloaded, _ := repo.FindByID(next.ID)
+	if reloaded.EndDate != nil {
+		t.Errorf("previous schedule must stay open after rollback, got %v", reloaded.EndDate)
+	}
+}

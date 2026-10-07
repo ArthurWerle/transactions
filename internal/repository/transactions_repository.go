@@ -99,6 +99,7 @@ type TransactionsRepository interface {
 	FindBiggest(month, year int) ([]model.Transaction, error)
 	FindLatest() ([]model.Transaction, error)
 	Update(transaction *model.Transaction) error
+	SplitRecurring(previous, next *model.Transaction) error
 	Delete(id uint) error
 	FindByDateRange(startDate, endDate time.Time) ([]model.Transaction, error)
 	FindMonthlyFlow(startMonth, endMonth time.Time) ([]MonthlyFlowRow, error)
@@ -285,6 +286,17 @@ func (r *transactionsRepository) FindBiggest(month, year int) ([]model.Transacti
 // subcategory/location.
 func (r *transactionsRepository) Update(transaction *model.Transaction) error {
 	return r.db.Omit(clause.Associations).Save(transaction).Error
+}
+
+// SplitRecurring closes the previous schedule and creates its successor
+// atomically, so a failure never leaves a month uncovered or doubled.
+func (r *transactionsRepository) SplitRecurring(previous, next *model.Transaction) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Omit(clause.Associations).Save(previous).Error; err != nil {
+			return err
+		}
+		return tx.Omit(clause.Associations).Create(next).Error
+	})
 }
 
 func (r *transactionsRepository) Delete(id uint) error {

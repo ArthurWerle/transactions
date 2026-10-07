@@ -34,6 +34,15 @@ type PrepayResult struct {
 	PrepaidAmount       float64            `json:"prepaid_amount"`
 }
 
+// ChangeAmountResult describes a recurring amount change. Previous is nil
+// when the change applied to the whole schedule (it had not started before
+// the effective month), in which case Current is the same row, updated.
+type ChangeAmountResult struct {
+	Previous      *model.Transaction `json:"previous"`
+	Current       *model.Transaction `json:"current"`
+	EffectiveFrom time.Time          `json:"effective_from"`
+}
+
 type TransactionPercentages struct {
 	CategoryMonthPercent *float64 `json:"category_month_percent,omitempty"`
 	TotalMonthPercent    *float64 `json:"total_month_percent,omitempty"`
@@ -60,6 +69,7 @@ type TransactionsService interface {
 	GetMonthlyDailyExpenses(ctx context.Context, month, year int) (*DailyExpensesResult, error)
 	GetMonthlyMerchants(ctx context.Context, month, year int) ([]MerchantMonthExpense, error)
 	PrepayTransaction(ctx context.Context, id uint) (*PrepayResult, error)
+	ChangeRecurringAmount(ctx context.Context, id uint, amount float64, effectiveFrom *time.Time) (*ChangeAmountResult, error)
 	GetTransactionMonthlyPercentages(ctx context.Context, tx *model.Transaction) (*TransactionPercentages, error)
 }
 
@@ -901,4 +911,79 @@ func (s *transactionsService) GetTransactionMonthlyPercentages(ctx context.Conte
 	}
 
 	return percentages, nil
+}
+
+// ChangeRecurringAmount changes a recurring schedule's amount from
+// effectiveFrom's month on (default: the current month) while keeping the
+// months before it at the old amount. The existing row is closed at the end
+// of the previous month and a copy with the new amount takes over, linked
+// through previous_id, so past reports don't change.
+func (s *transactionsService) ChangeRecurringAmount(ctx context.Context, id uint, amount float64, effectiveFrom *time.Time) (*ChangeAmountResult, error) {
+	original, err := s.transactionRepo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if !original.IsRecurring || original.StartDate == nil {
+		return nil, invalidf("transaction is not recurring")
+	}
+	if original.IsPrepaid {
+		return nil, invalidf("prepaid recurring transactions cannot change amount")
+	}
+	if amount <= 0 {
+		return nil, invalidf("amount must be greater than 0")
+	}
+	if amount == original.Amount {
+		return nil, invalidf("amount is unchanged")
+	}
+
+	var effectiveMonth time.Time
+	if effectiveFrom != nil {
+		effectiveMonth = MonthStart(*effectiveFrom)
+	} else {
+		effectiveMonth = MonthStart(time.Now().In(s.loc))
+	}
+
+	if original.EndDate != nil && MonthStart(*original.EndDate).Before(effectiveMonth) {
+		return nil, invalidf("recurring transaction ends before the effective month")
+	}
+
+	// Nothing was charged before the effective month: there is no history to
+	// preserve, so edit the schedule in place instead of splitting it.
+	if !MonthStart(*original.StartDate).Before(effectiveMonth) {
+		original.Amount = amount
+		if err := s.transactionRepo.Update(original); err != nil {
+			return nil, err
+		}
+		return &ChangeAmountResult{Current: original, EffectiveFrom: effectiveMonth}, nil
+	}
+
+	newStart := effectiveMonth
+	next := &model.Transaction{
+		CreatedById:   original.CreatedById,
+		IsRecurring:   true,
+		CategoryID:    original.CategoryID,
+		SubcategoryID: original.SubcategoryID,
+		LocationID:    original.LocationID,
+		Amount:        amount,
+		Type:          original.Type,
+		Origin:        original.Origin,
+		Description:   original.Description,
+		Frequency:     original.Frequency,
+		StartDate:     &newStart,
+		EndDate:       original.EndDate,
+		PreviousID:    &original.ID,
+	}
+	if err := validateTransactionShape(next); err != nil {
+		return nil, err
+	}
+
+	previousEnd := effectiveMonth.AddDate(0, 0, -1)
+	original.EndDate = &previousEnd
+
+	if err := s.transactionRepo.SplitRecurring(original, next); err != nil {
+		return nil, err
+	}
+
+	return &ChangeAmountResult{Previous: original, Current: next, EffectiveFrom: effectiveMonth}, nil
 }

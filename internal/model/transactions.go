@@ -27,6 +27,7 @@ type Transaction struct {
 	StartDate     *time.Time     `gorm:"type:date;column:start_date" json:"start_date"`
 	EndDate       *time.Time     `gorm:"type:date;column:end_date" json:"end_date"`
 	PrepaidFromID *uint          `gorm:"column:prepaid_from_id" json:"prepaid_from_id"`
+	PreviousID    *uint          `gorm:"column:previous_id" json:"previous_id"`
 	IsPrepaid     bool           `gorm:"->" json:"is_prepaid"`
 	CreatedAt     time.Time      `gorm:"type:timestamptz;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt     time.Time      `gorm:"type:timestamptz;default:CURRENT_TIMESTAMP" json:"updated_at"`

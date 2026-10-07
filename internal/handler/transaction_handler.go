@@ -1006,3 +1006,71 @@ func (h *TransactionHandler) PrepayTransaction(c *gin.Context) {
 		"prepaid_amount":       result.PrepaidAmount,
 	})
 }
+
+type ChangeRecurringAmountRequest struct {
+	Amount float64 `json:"amount" binding:"required"`
+	// EffectiveFrom is any date inside the first month charged at the new
+	// amount (YYYY-MM-DD or RFC3339). Defaults to the current month.
+	EffectiveFrom *string `json:"effective_from"`
+}
+
+func (h *TransactionHandler) ChangeRecurringAmount(c *gin.Context) {
+	idParam := c.Param("id")
+	var id uint
+	if _, err := fmt.Sscanf(idParam, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid transaction ID",
+		})
+		return
+	}
+
+	var req ChangeRecurringAmountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request body",
+			"details": "amount is required",
+		})
+		return
+	}
+
+	var effectiveFrom *time.Time
+	if req.EffectiveFrom != nil && *req.EffectiveFrom != "" {
+		// A bare date names the month directly; timestamps are read in the
+		// reporting location so a local midnight doesn't slip a month back.
+		parsed, parseErr := time.Parse("2006-01-02", *req.EffectiveFrom)
+		if parseErr != nil {
+			parsed, parseErr = time.Parse(time.RFC3339Nano, *req.EffectiveFrom)
+			if parseErr == nil {
+				parsed = parsed.In(h.loc)
+			}
+		}
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid effective_from format",
+				"details": "effective_from must be a valid date string (e.g., 2026-03-01 or 2026-03-01T00:00:00.000Z)",
+			})
+			return
+		}
+		effectiveFrom = &parsed
+	}
+
+	result, err := h.transactionService.ChangeRecurringAmount(c.Request.Context(), id, req.Amount, effectiveFrom)
+	if err != nil {
+		if err.Error() == "record not found" {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "Transaction not found",
+				"details": err.Error(),
+			})
+			return
+		}
+		respondTransactionError(c, err, "Failed to change recurring amount")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "Recurring amount changed successfully",
+		"previous":       result.Previous,
+		"current":        result.Current,
+		"effective_from": result.EffectiveFrom.Format("2006-01-02"),
+	})
+}
