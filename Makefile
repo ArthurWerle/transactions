@@ -1,4 +1,4 @@
-.PHONY: build run test test-coverage lint fmt clean docker-build docker-up docker-down migrate-up migrate-down migrate-create  deps
+.PHONY: build run test test-coverage lint verify fmt clean docker-build docker-up docker-down migrate-up migrate-down migrate-create  deps
 
 # Variables
 APP_NAME=transaction-service
@@ -36,6 +36,17 @@ lint: ## Run linter
 	else \
 		echo "golangci-lint not installed. Install it from https://golangci-lint.run/usage/install/"; \
 	fi
+
+# Run every check and fail if any fails (unlike `lint`, a missing golangci-lint is a failure)
+verify: ## Run gofmt check, go vet, build, tests and golangci-lint
+	@status=0; \
+	echo "==> gofmt -l"; out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "$$out"; echo "unformatted files above (fix with gofmt -s -w <file>)"; status=1; fi; \
+	echo "==> go vet"; go vet ./... || status=1; \
+	echo "==> go build"; go build ./... || status=1; \
+	echo "==> go test"; go test ./... -count=1 || status=1; \
+	echo "==> golangci-lint"; if command -v golangci-lint > /dev/null; then golangci-lint run ./... || status=1; else echo "golangci-lint not installed"; status=1; fi; \
+	if [ $$status -eq 0 ]; then echo "verify: OK"; else echo "verify: FAILED"; fi; \
+	exit $$status
 
 # Format code
 fmt: ## Format code with gofmt
